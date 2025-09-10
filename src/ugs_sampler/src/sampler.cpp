@@ -57,7 +57,8 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
 
     #pragma omp parallel for schedule(dynamic)
     for (int b=0; b<B; ++b) {
-        ThreadRNG rng((uint64_t)(1234 + b));
+        uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count()^(uint64_t)b;
+        ThreadRNG rng(seed);
         int root_vi, tries = 0;
         do {
             root_vi = rng.next_int((int)P->order.size());
