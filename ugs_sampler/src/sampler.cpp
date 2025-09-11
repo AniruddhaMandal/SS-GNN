@@ -61,7 +61,7 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
 
     #pragma omp parallel for schedule(dynamic)
     for (int b=0; b<B; ++b) {
-        if (viable_roots.empty()) break; // nothing to sample
+        if (viable_roots.empty()) throw std::runtime_error("No viable roots available"); // nothing to sample
         uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count()^(uint64_t)b;
         ThreadRNG rng(seed);
         int root_vi, tries = 0;
@@ -79,7 +79,6 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
     for (int b=0; b<B; ++b) {
         auto &nodes = samples[b];
         if ((int)nodes.size() < k) continue; // skip failed
-
         // global->local map
         std::unordered_map<int,int> g2l;
         for (int i=0;i<k;++i) g2l[nodes[i]] = i;
@@ -114,7 +113,6 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
         // nodes
         for (int i=0;i<(int)samples[b].size() && i<k;++i)
             nodes_ptr[b*k + i] = samples[b][i];
-
         // edges
         for (auto &pr : samples_edges[b]) {
             edge_idx_ptr[epos]              = pr.first;
@@ -123,7 +121,6 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
         }
         edge_ptr_ptr[b+1] = epos;
     }
-
     return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, graph_id_t);
 }
 

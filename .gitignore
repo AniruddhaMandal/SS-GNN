@@ -1,5 +1,5 @@
 **.so
 
 .vscode/
-src/ugs_sampler/build/
+ugs_sampler/build/
 .ipynb_checkpoints
