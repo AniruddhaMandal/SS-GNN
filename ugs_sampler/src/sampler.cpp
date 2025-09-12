@@ -59,7 +59,6 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
     for (int vi = 0; vi < (int)P->order.size(); ++vi)
         if (P->bucket_b[vi] > 0.0) viable_roots.push_back(vi);
 
-    #pragma omp parallel for schedule(dynamic)
     for (int b=0; b<B; ++b) {
         if (viable_roots.empty()) throw std::runtime_error("No viable roots available"); // nothing to sample
         uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count()^(uint64_t)b;
@@ -69,7 +68,7 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
             root_vi = viable_roots[rng.next_int((int)viable_roots.size())];
             rand_grow_sample(*P, k, rng, samples[b], root_vi);
             ++tries;
-        } while ((int)samples[b].size() < k && tries < 10);
+        } while ((int)samples[b].size() < k && tries < 100);
     }
 
     // gather edges
@@ -122,16 +121,4 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
         edge_ptr_ptr[b+1] = epos;
     }
     return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, graph_id_t);
-}
-
-// --- Pybind11 module ---
-PYBIND11_MODULE(ugs_sampler, m) {
-    m.doc() = "UGS sampler core (uses preprocessing from preproc.cpp)";
-    m.def("sample", &sample, py::arg("handle"), py::arg("m_per_graph"), py::arg("k"),
-          "Sample m_per_graph subgraphs of size k from preprocessed graph.");
-    m.def("create_preproc", &create_preproc, py::arg("edge_index"), py::arg("num_nodes"), py::arg("k"),
-          "Create preprocessing for a graph and return a handle (int).");
-    m.def("destroy_preproc", &destroy_preproc, py::arg("handle"), "Destroy a preprocessing handle.");
-    m.def("has_graphlets", &has_graphlets, py::arg("handle"), "Return true if preprocessed graph contains k-graphlets.");
-    m.def("get_preproc_info", &get_preproc_info, py::arg("handle"), "Return small metadata dict for debugging.");
 }

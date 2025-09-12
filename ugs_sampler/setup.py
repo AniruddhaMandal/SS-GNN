@@ -5,8 +5,10 @@ import os
 
 # Sources to compile (adjust if you split files or change paths)
 sources = [
+    "src/extension.cpp",
     "src/preproc.cpp",
     "src/sampler.cpp",
+    "src/ugs_sampler_batch_extension.cpp",
 ]
 
 # Optionally include vendored pybind11 headers (if you put pybind11 in third_party/)

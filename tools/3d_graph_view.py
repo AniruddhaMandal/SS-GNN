@@ -143,10 +143,10 @@ def nx_subgraphs(g,k):
 
 if __name__ == "__main__":
     os.makedirs("graph_json_data",exist_ok=True)
-    random_peptide_draw()
 
     data = pyg.datasets.LRGBDataset("../data","Peptides-func")
     i = random.randint(0,len(data))
-    subgraphs = nx_subgraphs(data[i],10)
+    subgraphs = nx_subgraphs(data[i],20)
+    pyg_json_dum(data[i])
     export_graphs_to_combined_json(subgraphs, outpath="graph_json_data/multi_graphs.json", gap=18, scale=8.0)
     

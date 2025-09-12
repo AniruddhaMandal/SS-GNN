@@ -83,7 +83,10 @@ struct ThreadRNG {
     inline int next_int(int n) { return (int)(next_u64() % (uint64_t)n); }
 };
 
-// Declaretion for sampler (Optional)
+// Declaration for batch_extension
+py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr, int m_per_graph, int k); 
+
+// Declaretion for sampler 
 py::tuple sample(i64 handle, int m_per_graph, int k);
 
 // Declaretion for preproc functions  
@@ -95,7 +98,3 @@ py::dict get_preproc_info(int64_t handle);
 // Registry: handle -> Preproc shared_ptr
 extern std::mutex registry_mutex;
 extern std::unordered_map<i64, std::shared_ptr<Preproc>> registry;
-int64_t create_preproc(const torch::Tensor &edge_index, i64 num_nodes, int k);
-void destroy_preproc(int64_t handle);
-bool has_graphlets(int64_t handle);
-py::dict get_preproc_info(int64_t handle);
