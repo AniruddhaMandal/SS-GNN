@@ -1,5 +1,9 @@
 **.so
 
 .vscode/
-ugs_sampler/build/
-.ipynb_checkpoints
+venv/
+.ipynb_checkpoints/
+**.egg-info/
+build/
+data/
+graph_json_data/

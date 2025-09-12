@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Multiple 3D Graphs</title>
+  <style>
+    html,body{ height:100%; margin:0; display:flex; }
+    #controls { width: 260px; padding:8px; background:#f5f5f5; overflow:auto; box-shadow: 2px 0 6px rgba(0,0,0,0.08); }
+    #3d-graph { flex:1; height:100vh; }
+    .graph-toggle { margin:6px 0; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <h3>Graphs</h3>
+    <div id="checkboxes">Loading…</div>
+    <hr/>
+    <label><input id="toggle-all" type="checkbox" checked> Show all</label>
+    <p style="font-size:12px;color:#444">Drag nodes to untangle. Right-click to unpin nodes.</p>
+  </div>
+
+  <div id="3d-graph"></div>
+
+  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+  <script src="https://unpkg.com/3d-force-graph"></script>
+
+  <script>
+    fetch('graph_json_data/multi_graphs.json').then(r => r.json()).then(data => {
+      // Determine distinct graph_ids
+      const graphIds = Array.from(new Set(data.nodes.map(n=>n.graph_id))).sort((a,b)=>a-b);
+
+      // attach checkboxes
+      const cbDiv = document.getElementById('checkboxes');
+      cbDiv.innerHTML = "";
+      graphIds.forEach(id => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'graph-toggle';
+        wrapper.innerHTML = `<label><input type="checkbox" class="gcb" data-g="${id}" checked> Graph ${id}</label>`;
+        cbDiv.appendChild(wrapper);
+      });
+
+      document.getElementById('toggle-all').addEventListener('change', e => {
+        const checked = e.target.checked;
+        document.querySelectorAll('.gcb').forEach(cb => cb.checked = checked);
+        applyFilter();
+      });
+
+      document.querySelectorAll('.gcb').forEach(cb => cb.addEventListener('change', applyFilter));
+
+      // Build initial graph
+      const Graph = ForceGraph3D()(document.getElementById('3d-graph'))
+        .graphData(data)
+        .nodeAutoColorBy(null) // we'll use nodeColor accessor
+        .nodeColor(node => node.color || null)
+        .nodeLabel(node => node.label ? node.label : `id: ${node.orig_id} (g${node.graph_id})`)
+        .nodeRelSize(4)
+        .linkOpacity(0.6)
+        .linkWidth(l => l.weight ? Math.max(0.5, Math.log(1 + l.weight)) : 1)
+        .d3VelocityDecay(0.35)
+        .d3AlphaDecay(0.02)
+        .enableNodeDrag(true)
+        .onNodeDragEnd(node => {
+          // pin node where dropped
+          node.fx = node.x;
+          node.fy = node.y;
+          node.fz = node.z;
+        });
+
+      // Use initial x,y,z if present (3d-force-graph will use them)
+      // Provide a utility to filter nodes/links by selected graph_ids
+      function applyFilter() {
+        const checked = Array.from(document.querySelectorAll('.gcb'))
+          .filter(cb => cb.checked).map(cb => parseInt(cb.dataset.g));
+        // filter nodes and links
+        const filteredNodes = data.nodes.filter(n => checked.includes(n.graph_id));
+        const nodeIds = new Set(filteredNodes.map(n => n.id));
+        const filteredLinks = data.links.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target));
+        Graph.graphData({nodes: filteredNodes, links: filteredLinks});
+      }
+
+      // Right-click to unpin all nodes
+      window.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        Graph.graphData().nodes.forEach(n => {
+          delete n.fx; delete n.fy; delete n.fz;
+        });
+      });
+
+      // initial centering & zoom
+      Graph.zoomToFit(400, 50);
+    }).catch(err => {
+      document.body.innerHTML = "<pre style='color:red'>Failed to load multi_graphs.json. Run a local HTTP server (python -m http.server) and ensure the JSON file is present.</pre>";
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
