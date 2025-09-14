@@ -42,7 +42,7 @@ static void rand_grow_sample(const Preproc &P, int k, ThreadRNG &rng,
 }
 
 // --- Sample API ---
-py::tuple sample(i64 handle, int m_per_graph, int k) {
+py::tuple sample(i64 handle, int m_per_graph, int k, std::string edge_mode = "local") {
     std::shared_ptr<Preproc> P;
     {
         std::lock_guard<std::mutex> lock(registry_mutex);
@@ -58,6 +58,24 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
     viable_roots.reserve(P->order.size());
     for (int vi = 0; vi < (int)P->order.size(); ++vi)
         if (P->bucket_b[vi] > 0.0) viable_roots.push_back(vi);
+
+    // Relax if empty: suffix_deg > 0
+    if (viable_roots.empty()) {
+        for (int vi = 0; vi < (int)P->order.size(); ++vi)
+            if (P->suffix_deg[vi] > 0) viable_roots.push_back(vi);
+    }
+    // Final relaxation: allow all positions
+    if (viable_roots.empty()) {
+        for (int vi = 0; vi < (int)P->order.size(); ++vi)
+            viable_roots.push_back(vi);
+    }
+
+    if (viable_roots.empty()) {
+        // nothing we can do
+        std::fprintf(stderr, "sample: no viable_roots at all (n_pos=%zu, k=%d)\n", P->order.size(), k);
+        throw std::runtime_error("No viable roots available");
+    }
+
 
     for (int b=0; b<B; ++b) {
         if (viable_roots.empty()) throw std::runtime_error("No viable roots available"); // nothing to sample
@@ -112,13 +130,58 @@ py::tuple sample(i64 handle, int m_per_graph, int k) {
         // nodes
         for (int i=0;i<(int)samples[b].size() && i<k;++i)
             nodes_ptr[b*k + i] = samples[b][i];
+        for (int i=(int)samples[b].size(); i<k; ++i)
+            nodes_ptr[b*k + i] = -1; // ensure remainder slots are -1
+
         // edges
         for (auto &pr : samples_edges[b]) {
-            edge_idx_ptr[epos]              = pr.first;
-            edge_idx_ptr[total_edges+epos]  = pr.second;
+            int u_local = pr.first;
+            int v_local = pr.second;
+
+            // Check the global node ids stored in nodes_ptr for validity.
+            // If either endpoint is -1, skip emitting this edge.
+            int64_t uglob = nodes_ptr[b*(int64_t)k + (int64_t)u_local];
+            int64_t vglob = nodes_ptr[b*(int64_t)k + (int64_t)v_local];
+            if (uglob == -1 || vglob == -1) {
+                continue; // skip invalid edge referencing placeholder node
+            }
+
+            int64_t u_out = 0, v_out = 0;
+            if (edge_mode == "local") {
+                // keep local indices 0..k-1
+                u_out = (int64_t)u_local;
+                v_out = (int64_t)v_local;
+            } else if (edge_mode == "flat") {
+                // flattened indices in 0 .. (B*k - 1)
+                u_out = (int64_t)b * (int64_t)k + (int64_t)u_local;
+                v_out = (int64_t)b * (int64_t)k + (int64_t)v_local;
+            } else if (edge_mode == "global") {
+                // use global node ids that were written into nodes_ptr
+                u_out = uglob;
+                v_out = vglob;
+            } else {
+                throw std::runtime_error(std::string("Unknown edge_mode: ") + edge_mode);
+            }
+
+            // write edge (note we preallocated for the original total_edges; we may write fewer)
+            edge_idx_ptr[epos]             = u_out;
+            edge_idx_ptr[total_edges + epos] = v_out;
             ++epos;
         }
         edge_ptr_ptr[b+1] = epos;
     }
+
+    // If we skipped any edges, trim the edge_index_t to the actual emitted size (epos).
+    if (epos < total_edges) {
+        // allocate a smaller tensor and copy the emitted prefix
+        torch::Tensor edge_index_trim = torch::empty({2, epos}, opts);
+        auto edge_trim_ptr = edge_index_trim.data_ptr<i64>();
+        for (int64_t i = 0; i < epos; ++i) {
+            edge_trim_ptr[i] = edge_idx_ptr[i];
+            edge_trim_ptr[epos + i] = edge_idx_ptr[total_edges + i];
+        }
+        edge_index_t = edge_index_trim;
+    }
+
     return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, graph_id_t);
 }

@@ -31,7 +31,7 @@ ext_modules = [
 
 setup(
     name="ugs_sampler",
-    version="0.1",
+    version="1.0.1",
     description="UGS sampler C++ extension (pybind11 + PyTorch cpp extension)",
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},

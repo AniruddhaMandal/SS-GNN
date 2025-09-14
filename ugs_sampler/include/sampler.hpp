@@ -87,7 +87,7 @@ struct ThreadRNG {
 py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr, int m_per_graph, int k); 
 
 // Declaretion for sampler 
-py::tuple sample(i64 handle, int m_per_graph, int k);
+py::tuple sample(i64 handle, int m_per_graph, int k, std::string edge_mode);
 
 // Declaretion for preproc functions  
 int64_t create_preproc(const torch::Tensor &edge_index, i64 num_nodes, int k);

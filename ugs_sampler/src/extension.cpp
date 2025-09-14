@@ -3,8 +3,8 @@
 // --- Pybind11 module ---
 PYBIND11_MODULE(ugs_sampler, m) {
     m.doc() = "UGS sampler core (uses preprocessing from preproc.cpp)";
-    m.def("sample", &sample, py::arg("handle"), py::arg("m_per_graph"), py::arg("k"),
-          "Sample m_per_graph subgraphs of size k from preprocessed graph.");
+    m.def("sample", &sample, py::arg("handle"), py::arg("m_per_graph"), py::arg("k"), py::arg("edge_mode")="local",
+          "Sample m_per_graph subgraphs of size k from preprocessed graph. edge_mode in {'local', 'flat', 'global'}");
     m.def("create_preproc", &create_preproc, py::arg("edge_index"), py::arg("num_nodes"), py::arg("k"),
           "Create preprocessing for a graph and return a handle (int).");
     m.def("destroy_preproc", &destroy_preproc, py::arg("handle"), "Destroy a preprocessing handle.");

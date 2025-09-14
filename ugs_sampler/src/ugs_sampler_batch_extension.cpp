@@ -10,13 +10,7 @@
 #include <memory>
 #include <chrono>
 
-// Forward declarations of functions defined in preproc.cpp / sampler.cpp
-extern int64_t create_preproc(const torch::Tensor &edge_index, int64_t num_nodes, int k);
-extern void destroy_preproc(int64_t handle);
-extern py::tuple sample(int64_t handle, int m_per_graph, int k);
-
-namespace py = pybind11;
-using i64 = int64_t;
+#include "sampler.hpp"
 
 // Helper: slice a global batched edge_index into a per-graph edge_index with renumbered nodes
 static torch::Tensor slice_and_renumber_edge_index(const torch::Tensor &edge_index, i64 node_lo, i64 node_hi) {
@@ -74,7 +68,6 @@ py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr
     edge_ptrs.push_back(0);
 
     int64_t Bpos = 0; // which sampled-subgraph index overall
-    int64_t global_node_offset = 0; // to convert per-graph local node ids to global node ids
 
     auto ptr_acc = ptr.accessor<i64,1>();
 
@@ -82,13 +75,32 @@ py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr
         int64_t node_lo = ptr_acc[gi];
         int64_t node_hi = ptr_acc[gi+1];
         int64_t num_nodes = node_hi - node_lo;
+        // --- add this right after computing node_lo, node_hi, num_nodes ---
+        if (num_nodes < k) {
+            // produce m_per_graph placeholder samples (nodes = all -1, no edges)
+            for (int s = 0; s < m_per_graph; ++s) {
+                int64_t out_idx = Bpos + s;
+                // fill nodes_flat for this sample with -1
+                for (int64_t j = 0; j < k; ++j) 
+                    nodes_flat[out_idx * k + j] = -1;
+                // set graph id
+                graph_id_flat[out_idx] = gi;
+                // no edges emitted: edge_ptr stays the same (push same value)
+                edge_ptrs.push_back(edge_ptrs.back());
+            }
+            Bpos += m_per_graph;
+            continue; // skip preprocessing / sampling for this graph
+        }
+
         if (num_nodes <= 0) {
             // still advance graph_id positions and leave nodes as -1
             for (int s = 0; s < m_per_graph; ++s) {
+                int64_t out_idx = Bpos + s;
+                for (int64_t j = 0; j < k; ++j) nodes_flat[out_idx * k + j] = -1;
                 graph_id_flat[Bpos] = gi;
-                Bpos++;
                 edge_ptrs.push_back(edge_ptrs.back());
             }
+            Bpos += m_per_graph;
             continue;
         }
         // slice and renumber
@@ -96,7 +108,7 @@ py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr
         // create preproc for this graph
         int64_t handle = create_preproc(g_ei, num_nodes, k);
         // sample m_per_graph subgraphs
-        py::tuple tup = sample(handle, m_per_graph, k);
+        py::tuple tup = sample(handle, m_per_graph, k, "flat");
         // tup = (nodes_t, edge_index_t, edge_ptr_t, graph_id_t) where nodes_t contains local node ids (0..num_nodes-1)
         torch::Tensor nodes_t_local = tup[0].cast<torch::Tensor>();
         torch::Tensor edge_index_t_local = tup[1].cast<torch::Tensor>();
@@ -114,7 +126,6 @@ py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr
         }
         // convert edges: edge_index_t_local has coords relative to each sample (0..k-1)
         auto edge_idx_acc = edge_index_t_local.accessor<i64,2>();
-        int64_t local_m_edges = edge_index_t_local.size(1);
         auto edge_ptr_acc = edge_ptr_t_local.accessor<i64,1>();
         // For each sampled subgraph in this graph, determine its number of edges and compute global v indices
         for (int64_t local_b = 0; local_b < nodes_t_local.size(0); ++local_b) {
@@ -125,7 +136,7 @@ py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr
                 int64_t v = edge_idx_acc[1][epos];
                 // map u/v which are local indices 0..k-1 to global node positions within overall nodes_flat
                 // Need to find which sample this edge belongs to: it's local_b, so global sample index is (Bpos + local_b)
-                int64_t sample_global_idx = Bpos + local_b;
+                //int64_t sample_global_idx = Bpos + local_b;
                 // For consistency with sampler.sample output, edges are stored as (node_idx_in_sample, node_idx_in_sample)
                 // We'll store them the same way, but the nodes in nodes_flat carry global graph node ids.
                 edges_all.emplace_back(u, v);
