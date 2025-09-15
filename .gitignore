@@ -1,4 +1,5 @@
 **.so
+**.pth
 
 __pycache__/
 .vscode/

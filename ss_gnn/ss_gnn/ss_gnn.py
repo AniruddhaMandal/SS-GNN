@@ -23,9 +23,60 @@ class MLP(nn.Module):
         return self.mlp(x)
 
 class SubgraphGINEncoder(nn.Module):
-    """
-    Encode sampled subgraphs with a small GIN and produce per-graph representations
-    by averaging subgraph representations for each original graph.
+    """SubgraphGINEncoder(in_channels, hidden_channels=64, num_gin_layers=3, mlp_layers=2, dropout=0.0)
+
+    Encode sampled connected induced subgraphs with a small GIN and produce per-graph representations.
+
+    Description
+    -----------
+    Given sampled k-node subgraphs (from the sampler), this module:
+    1. Gathers node features for every sampled node (nodes are provided as global node ids).
+    2. Runs a GIN over the flattened collection of sampled nodes + edges.
+    3. Produces a subgraph representation by mean-pooling node embeddings inside each sample.
+    4. Produces a graph-level representation by averaging its subgraph representations.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of input node features.
+    hidden_channels : int, default=64
+        Hidden dimension used inside GIN layers and final MLP.
+    num_gin_layers : int, default=3
+        Number of GIN message-passing layers.
+    mlp_layers : int, default=2
+        Number of layers inside each GIN's internal MLP.
+    dropout : float, default=0.0
+        Dropout applied after GIN layers (if > 0).
+
+    Forward inputs
+    --------------
+    x_global : Tensor[N_total, F]
+        Global node feature matrix for the batched graphs.
+    nodes_t : LongTensor[B_total, k]
+        Sample rows: each row contains k global node ids (or -1 for missing slots).
+    edge_index_t : LongTensor[2, E_total]
+        Edges for all samples. Can be local indices (0..k-1) or flattened indices
+        (0..B_total*k-1) depending on the sampler mode.
+    edge_ptr_t : LongTensor[B_total+1]
+        Pointer into edge_index_t for per-sample edge blocks (may be unused if using flat edges).
+    graph_id_t : LongTensor[B_total]
+        For each sample row, the original graph index (0..G-1).
+    k : int
+        Number of nodes per sample (sampling width).
+
+    Returns
+    -------
+    per_graph_rep : Tensor[G, hidden_channels]
+        Per-graph representation obtained by averaging only *non-empty* subgraph representations.
+    subgraph_reps : Tensor[B_total, hidden_channels]
+        Representation for each sampled subgraph (empty samples -> zero vector).
+
+    Notes
+    -----
+    - The encoder automatically moves sampler tensors to the device of `x_global`.
+    - Placeholder slots in `nodes_t` are indicated by `-1`. Such nodes are ignored during gathering;
+    samples with no valid nodes yield zero subgraph vectors and do not contribute to graph averages.
+    - If using sampler edge_mode='flat', you can feed `edge_index_t` directly as flattened edges.
     """
     def __init__(self,
                  in_channels: int,
@@ -168,3 +219,94 @@ class SubgraphGINEncoder(nn.Module):
         per_graph_rep = self.final_lin(per_graph_rep)
 
         return per_graph_rep, subgraph_reps
+
+
+class SubgraphClassifier(nn.Module):
+    """SubgraphClassifier(encoder, hidden_dim, num_classes=10, dropout=0.0)
+
+    Classifier head that maps SubgraphGINEncoder graph representations to class logits.
+
+    Parameters
+    ----------
+    encoder : nn.Module
+        A SubgraphGINEncoder (or compatible) that returns (per_graph_rep, subgraph_reps).
+    hidden_dim : int
+        Dimensionality of the encoder's output per-graph representation (input to the head).
+    num_classes : int, default=10
+        Number of target classes.
+    dropout : float, default=0.0
+        Dropout probability applied in the head.
+
+    Forward inputs
+    --------------
+    x_global : Tensor[N_total, F]
+        Global node features for the batched graphs.
+    nodes_t : LongTensor[B_total, k]
+    edge_index_t : LongTensor[2, E_total]
+    edge_ptr_t : LongTensor[B_total+1]
+    graph_id_t : LongTensor[B_total]
+    k : int
+        Sampler outputs describing sampled subgraphs (see SubgraphGINEncoder docstring).
+
+    Returns
+    -------
+    logits : Tensor[G, num_classes]
+        Raw scores for each graph (use with CrossEntropyLoss).
+    probs : Tensor[G, num_classes]
+        Softmax probabilities.
+    preds : LongTensor[G]
+        Predicted class indices (argmax).
+    one_hot : Tensor[G, num_classes]
+        One-hot encoded predictions (float).
+
+    Notes
+    -----
+    - `hidden_dim` must match the encoder's per-graph output size (or use an adapter layer).
+    - For training, pass `logits` and a target LongTensor of shape (G,) with values in 0..num_classes-1
+    to `torch.nn.CrossEntropyLoss`.
+    """
+
+    def __init__(self,
+                 encoder: nn.Module,
+                 hidden_dim: int,
+                 num_classes: int = 10,
+                 dropout: float = 0.0):
+        super().__init__()
+        self.encoder = encoder
+        self.num_classes = num_classes
+        self.logit_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout) if dropout > 0 else nn.Identity(),
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+    def forward(self,
+                x_global: torch.Tensor,
+                nodes_t: torch.LongTensor,
+                edge_index_t: torch.LongTensor,
+                edge_ptr_t: torch.LongTensor,
+                graph_id_t: torch.LongTensor,
+                k: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+          logits: (num_graphs, num_classes)   -- raw scores (use with CrossEntropyLoss)
+          probs:  (num_graphs, num_classes)   -- softmax probabilities
+          preds:  (num_graphs,)                -- predicted class indices (long)
+          one_hot: (num_graphs, num_classes)  -- one-hot encoded predictions (float)
+        """
+        # Get per-graph representation from encoder
+        # encoder expected to return (per_graph_rep, subgraph_reps)
+        per_graph_rep, _ = self.encoder(x_global, nodes_t, edge_index_t, edge_ptr_t, graph_id_t, k)
+
+        logits = self.logit_head(per_graph_rep)            # (G, C)
+        probs = F.softmax(logits, dim=-1)
+        preds = torch.argmax(probs, dim=-1)
+        one_hot = F.one_hot(preds, num_classes=self.num_classes).to(dtype=logits.dtype)
+
+        return logits, probs, preds, one_hot
+
+    def predict(self, *args, **kwargs):
+        """Convenience: return predicted indices (cpu numpy)"""
+        _, _, preds, _ = self.forward(*args, **kwargs)
+        return preds.detach().cpu().numpy()
