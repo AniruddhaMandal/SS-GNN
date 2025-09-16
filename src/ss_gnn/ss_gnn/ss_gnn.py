@@ -221,6 +221,220 @@ class SubgraphGINEncoder(nn.Module):
         return per_graph_rep, subgraph_reps
 
 
+def _nan_check(t: torch.Tensor, name: str):
+    if t is None:
+        return
+    if torch.isnan(t).any() or torch.isinf(t).any():
+        print(f"*** NaN/Inf at {name}: device={t.device}, dtype={t.dtype}, "
+              f"nan={torch.isnan(t).any().item()}, inf={torch.isinf(t).any().item()}, "
+              f"min={t.min().item() if t.numel()>0 else 'empty'}, max={t.max().item() if t.numel()>0 else 'empty'}")
+        raise RuntimeError(f"NaN/Inf detected in {name}")
+
+class SubgraphTransformerAggregator(nn.Module):
+    """
+    SubgraphTransformerAggregator(encoder, hidden_dim, n_heads=4, n_layers=2, dim_feedforward=256, dropout=0.1)
+
+    Transformer-based aggregator that turns per-subgraph representations (produced by a
+    `SubgraphGINEncoder`-style encoder) into a single per-graph vector.
+
+    Description
+    -----------
+    - Calls `encoder(x_global, nodes_t, edge_index_t, edge_ptr_t, graph_id_t, k)` and uses the
+    returned `subgraph_reps` (shape: [B_total, hidden_dim]).
+    - Groups subgraph vectors by their original graph `graph_id_t`, pads each graph's list
+    of subgraph vectors to the same length, and prepends a learned CLS token per graph.
+    - Runs a small `nn.TransformerEncoder` over each graph's sequence and returns the CLS
+    output as the graph representation.
+    - Empty graphs (no valid subgraphs) produce a zero vector and do not contribute to the
+    transformer's attention.
+
+    Key assumptions / details
+    -------------------------
+    - The encoder must return a tuple `(per_graph_rep, subgraph_reps)`; only `subgraph_reps`
+    is used here (the encoder's `per_graph_rep` is ignored).
+    - Padding mask semantics: `src_key_padding_mask` uses dtype `torch.bool` with
+    `True` indicating a padded (masked) position.
+    - The module performs basic defensive sanitization (ensures float32 and applies
+    `torch.nan_to_num`), prepends a learned CLS token, and applies a small LayerNorm
+    before the Transformer for numerical stability.
+    - Returns zeros for graphs that had no valid subgraphs so downstream heads can safely
+    operate without special-casing empty graphs.
+
+    Forward arguments
+    -----------------
+    x_global : Tensor[N_total, F]        - global node features for batched graphs
+    nodes_t : LongTensor[B_total, k]     - sampled node ids per subgraph (or -1 placeholders)
+    edge_index_t : LongTensor[2, E_total] - edges for all samples (local or flattened)
+    edge_ptr_t : LongTensor[B_total+1]   - pointer into edge_index_t per sample (may be unused)
+    graph_id_t : LongTensor[B_total]     - original graph index for each sampled subgraph
+    k : int                              - number of nodes per sample (sample width)
+
+    Returns
+    -------
+    per_graph_rep : Tensor[num_graphs, hidden_dim]
+        Transformer-produced graph vectors (CLS outputs); graphs with no valid subgraphs are zeroed.
+    subgraph_reps : Tensor[B_total, hidden_dim]
+        Raw subgraph representations returned by the encoder (unchanged shape).
+
+    Notes
+    -----
+    - This aggregator is intended to be used as a drop-in module between a subgraph encoder
+    and a classifier or other prediction head.
+    - For large numbers of subgraphs per graph you may want to limit / subsample tokens
+    (memory/scalability consideration).
+    """
+
+    def __init__(self,
+                 encoder: nn.Module,
+                 hidden_dim: int,
+                 n_heads: int = 4,
+                 n_layers: int = 2,
+                 dim_feedforward: int = 256,
+                 dropout: float = 0.1):
+        super().__init__()
+        self.encoder = encoder
+        self.hidden_dim = hidden_dim
+
+        # CLS token shape (1, 1, hidden)
+        self.cls_token = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+
+        # optional adapter (keep identity unless needed)
+        self.adapter = nn.Identity()
+
+        # small LayerNorm to stabilize incoming embeddings
+        self.pre_ln = nn.LayerNorm(hidden_dim, eps=1e-6)
+
+        # transformer encoder (batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=n_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation='relu',
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+        # final proj (optional — can remove while debugging)
+        self.final_proj = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        # conservative weight init for transformer-related weights
+        self._init_weights()
+
+    def _init_weights(self):
+        # small xavier init for linear layers inside transformer and final_proj
+        for p in self.transformer.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p, gain=0.5)
+        for m in self.final_proj.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, gain=0.5)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self,
+                x_global: torch.Tensor,
+                nodes_t: torch.LongTensor,
+                edge_index_t: torch.LongTensor,
+                edge_ptr_t: torch.LongTensor,
+                graph_id_t: torch.LongTensor,
+                k: int
+               ) -> Tuple[torch.Tensor, torch.Tensor]:
+        device = x_global.device
+
+        # 1) get subgraph reps from encoder
+        _, subgraph_reps = self.encoder(x_global, nodes_t, edge_index_t, edge_ptr_t, graph_id_t, k)
+
+        # 2) quick sanity
+        _nan_check(subgraph_reps, "subgraph_reps_after_encoder")
+
+        # 3) ensure float32 (avoid AMP issues while debugging)
+        if subgraph_reps.dtype != torch.float32:
+            subgraph_reps = subgraph_reps.float()
+
+        # 4) sanitize (temporary defensive)
+        subgraph_reps = torch.nan_to_num(subgraph_reps, nan=0.0, posinf=1e6, neginf=-1e6)
+
+        # 5) prepare graph grouping
+        graph_id_t = graph_id_t.to(device)
+        B_total = subgraph_reps.size(0)
+        if graph_id_t.numel() == 0:
+            return torch.zeros((0, self.hidden_dim), device=device, dtype=subgraph_reps.dtype), subgraph_reps
+
+        num_graphs = int(graph_id_t.max().item()) + 1
+
+        # valid mask: a subgraph is valid if it's not the zero vector (encoder sets empty to zero)
+        valid_mask = (subgraph_reps.abs().sum(dim=1) != 0.0)
+
+        # collect per-graph lists and max length
+        per_graph_lists = []
+        max_s = 0
+        for g in range(num_graphs):
+            sel = (graph_id_t == g) & valid_mask
+            if sel.any():
+                items = subgraph_reps[sel]
+                per_graph_lists.append(items)
+                if items.size(0) > max_s:
+                    max_s = items.size(0)
+            else:
+                per_graph_lists.append(torch.zeros((0, self.hidden_dim), device=device, dtype=subgraph_reps.dtype))
+
+        if max_s == 0:
+            per_graph_rep = torch.zeros((num_graphs, self.hidden_dim), device=device, dtype=subgraph_reps.dtype)
+            return per_graph_rep, subgraph_reps
+
+        S_max = max_s
+        padded = torch.zeros((num_graphs, S_max, self.hidden_dim), device=device, dtype=subgraph_reps.dtype)
+        padding_mask = torch.ones((num_graphs, S_max), device=device, dtype=torch.bool)
+
+        for g, items in enumerate(per_graph_lists):
+            if items.size(0) == 0:
+                continue
+            s = items.size(0)
+            padded[g, :s] = items
+            padding_mask[g, :s] = False
+
+        _nan_check(padded, "padded_subgraph_reps")
+
+        # 6) prepend CLS token using repeat (safe)
+        cls_expand = self.cls_token.repeat(num_graphs, 1, 1)  # (G,1,hidden)
+        src = torch.cat([cls_expand, padded], dim=1)         # (G, S_max+1, hidden)
+
+        # src key padding mask: True = masked
+        src_key_padding_mask = torch.cat([torch.zeros((num_graphs, 1), dtype=torch.bool, device=device),
+                                          padding_mask], dim=1)
+
+        # 7) adapter + pre-layernorm
+        src = self.adapter(src)
+        src = self.pre_ln(src)
+
+        _nan_check(src, "src_before_transformer")
+
+        # 8) run transformer (ensure mask dtype & device OK)
+        src_key_padding_mask = src_key_padding_mask.to(device=device)
+        trans_out = self.transformer(src, src_key_padding_mask=src_key_padding_mask)
+
+        _nan_check(trans_out, "trans_out_after_transformer")
+
+        # 9) get CLS
+        per_graph_rep = trans_out[:, 0, :]
+
+        # 10) final proj (optional)
+        per_graph_rep = self.final_proj(per_graph_rep)
+
+        _nan_check(per_graph_rep, "per_graph_rep_final")
+
+        # 11) zero-out graphs with no valid subgraphs
+        for g, items in enumerate(per_graph_lists):
+            if items.size(0) == 0:
+                per_graph_rep[g].zero_()
+
+        return per_graph_rep, subgraph_reps
+
 class SubgraphClassifier(nn.Module):
     """SubgraphClassifier(encoder, hidden_dim, num_classes=10, dropout=0.0)
 

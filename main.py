@@ -6,19 +6,23 @@ import torch.nn as nn
 import torch_geometric as pyg 
 from torch_geometric.loader import DataLoader
 from torch_geometric.datasets import LRGBDataset
+from sklearn.metrics import average_precision_score
 import ugs_sampler
-from ss_gnn import SubgraphGINEncoder, SubgraphClassifier
+from ss_gnn.ss_gnn import SubgraphGINEncoder, SubgraphClassifier, SubgraphTransformerAggregator
 import torch.optim as optim
 import time
 
 # Hyperparams
-k = 15
+k = 3
 m_per_graph = 1000
 F_dim = 9
-num_epochs = 60
+hidden_dim = 128
+num_epochs = 100
 lr = 1e-3
 weight_decay = 1e-5
 clip_grad_norm = 2.0
+threshold = 0.5
+mpnn_layers = 3
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Dataset, Dataloader
@@ -31,12 +35,13 @@ test_loader = DataLoader(test_data,batch_size=64,shuffle=True)
 val_loader = DataLoader(val_data,batch_size=64,shuffle=True)
 
 # Model, optimizer, loss
-encoder = SubgraphGINEncoder(in_channels=F_dim, hidden_channels=128, num_gin_layers=3)
-model = SubgraphClassifier(encoder=encoder, hidden_dim=128, num_classes=10, dropout=0.1)
+encoder = SubgraphGINEncoder(in_channels=F_dim, hidden_channels=hidden_dim, num_gin_layers=mpnn_layers)
+aggr = SubgraphTransformerAggregator(encoder=encoder,hidden_dim=hidden_dim)
+model = SubgraphClassifier(encoder=aggr, hidden_dim=hidden_dim, num_classes=10, dropout=0.1)
 model.to(device)
 
 optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-criterion = nn.CrossEntropyLoss()
+criterion = nn.BCEWithLogitsLoss()
 
 # Optional scheduler
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
@@ -93,7 +98,7 @@ for epoch in range(1, num_epochs + 1):
         epoch_loss += loss.item() * targets.size(0)   # accumulate sum loss (for averaging later)
 
         # optional logging
-        if (step + 1) % 1 == 0:
+        if (step + 1) % 3 == 0:
             avg_loss = epoch_loss / ((step + 1) * targets.size(0))
             print(f"Epoch {epoch} Step {step+1} avg-loss {avg_loss:.4f}")
 
@@ -108,8 +113,9 @@ for epoch in range(1, num_epochs + 1):
     # -------------- validation --------------
     model.eval()
     val_loss = 0.0
-    correct = 0
-    total = 0
+    all_targets = []
+    all_probs = []
+
     with torch.no_grad():
         for batch in val_loader:
             try:
@@ -126,12 +132,20 @@ for epoch in range(1, num_epochs + 1):
             loss = criterion(logits, targets)
             val_loss += loss.item() * targets.size(0)
 
-            correct += (preds == targets.argmax()).sum().item()
-            total += targets.size(0)
+            # collect for AP
+            all_targets.append(targets.cpu())
+            all_probs.append(probs.cpu())
 
-    val_loss = val_loss / total
-    val_acc = correct / total
-    print(f"Epoch {epoch} val_loss: {val_loss:.4f}  val_acc: {val_acc:.4f}")
+    val_loss = val_loss / len(val_loader.dataset)
+
+    # concatenate across batches
+    all_targets = torch.cat(all_targets).numpy()
+    all_probs = torch.cat(all_probs).numpy()
+
+    # compute Average Precision (micro)
+    val_ap = average_precision_score(all_targets, all_probs, average="micro")
+
+    print(f"Epoch {epoch} val_loss: {val_loss:.4f}  val_AP: {val_ap:.4f}")
 
     # save best
     if val_loss < best_val_loss:
