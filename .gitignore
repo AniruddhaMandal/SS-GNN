@@ -9,3 +9,5 @@ venv/
 build/
 data/
 graph_json_data/
+checkpoints/
+logs/

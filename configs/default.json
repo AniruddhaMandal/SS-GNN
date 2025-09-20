@@ -1,0 +1,50 @@
+{
+    "name":"Default Experiment",
+    "dataset_name": "Peptides-func",
+    "model_name": "SS-GNN",
+
+    "model_config": 
+    {
+        "name": "ss-gnn",
+        "feature_dim": 9,
+        "hidden_dim": 128,
+        "mpnn_layers": 3,
+        "dropout": 0.1,
+        "transformer_heads": 4,
+        "transformer_layers": 2,
+        "transformer_dim": 256,
+        "out_dim": 10,
+        "subgraph_param": {
+            "k": 15,
+            "m": 1000
+        }
+    },
+    "train": 
+    {
+        "threshold": 0.5,
+        "epochs": 20,
+        "train_batch_size": 32,
+        "val_batch_size": 64,
+        "lr": 1e-3,
+        "weight_decay": 1e-5,
+        "optimizer": "adam",  
+        "scheduler": {
+            "type":"step",
+            "step_size":30,
+            "gamma":0.1
+        },
+        "loss_fn": "BCEWithLogitsLoss",
+        "metric": "AP"
+    },
+
+    "device":"cuda",
+    "seed": 42,
+    "num_workers": 4,
+    "log_dir": "logs",
+    "checkpoint_dir": "checkpoints",
+    "save_every": 1,
+    "keep_last_k": 3,
+
+    "use_amp": false,
+    "grad_clip": 2.0
+}

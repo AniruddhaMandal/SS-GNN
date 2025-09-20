@@ -1,0 +1,656 @@
+"""
+Experiment runner template
+==========================
+
+A flexible Experiment class and ExperimentConfig dataclass you can drop into your project.
+
+Purpose
+-------
+- Provide structure for running training/evaluation experiments for PyTorch models (including
+  GNNs with PyTorch Geometric) with minimal changes.
+- The class is intentionally generic: you supply small callables or override hooks to instantiate
+  datasets / models / metrics. This file provides the scaffolding and logging/checkpointing.
+
+How to use
+----------
+- Fill `ExperimentConfig` fields or construct one and pass callables in `model_fn`, `dataloader_fn`.
+- `model_fn(cfg)` should return an nn.Module (uninitialized weights OK).
+- `dataloader_fn(cfg)` should return a tuple (train_loader, val_loader, test_loader) or
+  `(train_loader, val_loader)` (test optional).
+- Optionally provide `criterion_fn`, `metric_fn` or override `evaluate`.
+
+Notes
+-----
+- This template supports AMP (torch.cuda.amp), gradient clipping, LR scheduler hooks, checkpointing,
+  TensorBoard logging, deterministic seeding, and simple CLI friendly prints.
+- You can subclass `Experiment` and override hooks for complex dataset/model construction.
+
+"""
+
+from __future__ import annotations
+import os
+import time
+import json
+import shutil
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional, Tuple
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+import ugs_sampler
+from tqdm.auto import tqdm
+
+# ------- Configuration dataclass -------
+
+@dataclass
+class ExperimentConfig:
+    # Callables
+    model_fn: Optional[Callable[["ExperimentConfig"], nn.Module]] = None
+    dataloader_fn: Optional[Callable[["ExperimentConfig"], Tuple[DataLoader, DataLoader, Optional[DataLoader]]]] = None
+    criterion_fn: Optional[Callable[["ExperimentConfig"], nn.Module]] = None
+    metric_fn: Optional[Callable[[torch.Tensor, torch.Tensor], Dict[str, float]]] = None
+
+    # Model / data identifiers (for logging filenames)
+    name: str = "exp"
+    dataset_name: Optional[str] = None
+    model_name: Optional[str] = None
+    model_config: Optional[dict] = None # example: {"model":{"subgraph_param":{..}, "name": ..,"feature_dim":..,}}
+
+    # Metric and Criterion names
+    metric: Optional[str] = None
+    loss_fn: Optional[str] = None
+
+    # Training hyperparameters
+    epochs: int = 100
+    train_batch_size: int = 32
+    val_batch_size: int = 64
+    lr: float = 1e-3
+    weight_decay: float = 0.0
+    optimizer: str = "adam"  # 'adam' or 'adamw' or 'sgd'
+    scheduler: Optional[Dict[str, Any]] = None  # example: {'type':'step','step_size':30,'gamma':0.1}
+
+    # Misc
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    seed: int = 42
+    num_workers: int = 4
+    log_dir: str = "logs"
+    checkpoint_dir: str = "checkpoints"
+    save_every: int = 1
+    keep_last_k: int = 3
+
+    # Numerical/stability
+    use_amp: bool = False
+    grad_clip: Optional[float] = None  # clip norm value
+
+    # Extra container for user-specific kwargs
+    model_kwargs: Dict[str, Any] = field(default_factory=dict)
+    dataloader_kwargs: Dict[str, Any] = field(default_factory=dict)
+    criterion_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    # Resume
+    resume_from: Optional[str] = None
+
+# ------- Experiment class -------
+
+class Experiment:
+    """**Experiment scaffolding. Override or pass callables via ExperimentConfig.**
+
+    Key hooks to override or supply in config:
+      - `model_fn(cfg)` -> `nn.Module`
+      - `dataloader_fn(cfg)` -> (train_loader, val_loader, test_loader)
+      - `criterion_fn(cfg)` -> loss module
+      - `metric_fn(preds, targets)` -> `dict` of metrics
+
+    The default training/eval code is generic for classification/regression tasks. For
+    more custom tasks (structured outputs, GNNs with special batching), override
+    `train_one_epoch` and `evaluate`.
+
+    ## Example usage snippet 
+    (fill these callables)
+
+    ```python
+    def my_model_fn(cfg):
+        # return an nn.Module instance
+        return MyModel(**cfg.model_kwargs)
+
+    def my_dataloader_fn(cfg):
+        # return train_loader, val_loader, test_loader (test optional)
+        # e.g. using torch_geometric's DataLoader or standard DataLoader
+        return train_loader, val_loader, test_loader
+
+    def my_metric_fn(preds, targets):
+        # preds / targets are cpu tensors. Return dict of metrics, e.g. {'accuracy':acc}
+        from sklearn.metrics import accuracy_score
+        acc = accuracy_score(targets.numpy(), preds.numpy())
+        return {'accuracy': acc, 'metric': acc}
+
+    cfg = ExperimentConfig(name='myexp', model_fn=my_model_fn, dataloader_fn=my_dataloader_fn,
+                           criterion_fn=lambda c: nn.CrossEntropyLoss(), metric_fn=my_metric_fn)
+    exp = Experiment(cfg)
+    exp.train()
+    ```
+
+    Customize by subclassing Experiment and overriding `train_one_epoch` and `evaluate` for advanced flows.
+    """
+
+    def __init__(self, cfg: ExperimentConfig):
+        self.cfg = cfg
+        self.device = torch.device(cfg.device)
+        os.makedirs(cfg.log_dir, exist_ok=True)
+        os.makedirs(cfg.checkpoint_dir, exist_ok=True)
+
+        # logging
+        self.logger = self._setup_logger()
+        self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
+
+        # deterministic
+        self._set_seed(cfg.seed)
+
+        # placeholders (filled in build)
+        self.model: Optional[nn.Module] = None
+        self.criterion: Optional[nn.Module] = None
+        self.optimizer: Optional[optim.Optimizer] = None
+        self.scheduler = None
+        self.scaler: Optional[torch.cuda.amp.GradScaler] = None
+
+        # data loaders
+        self.train_loader = None
+        self.val_loader = None
+        self.test_loader = None
+
+        # bookkeeping
+        self.best_metric = -float('inf')
+        self.history = {"train_loss": [], "val_loss": []}
+
+        # Build components
+        self.build()
+
+    # ---------- Setup helpers ----------
+    def _setup_logger(self):
+        logger = logging.getLogger(self.cfg.name)
+        logger.setLevel(logging.INFO)
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        fmt = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+        ch.setFormatter(fmt)
+        if not logger.handlers:
+            logger.addHandler(ch)
+        return logger
+
+    def _set_seed(self, seed: int):
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        import random, numpy as np
+        random.seed(seed)
+        np.random.seed(seed)
+
+    # ---------- Build components (override or supply fns) ----------
+    def build(self):
+        self.logger.info("Building experiment components...")
+        # model
+        if callable(self.cfg.model_fn):
+            self.model = self.cfg.model_fn(self.cfg)
+        else:
+            raise NotImplementedError("Provide cfg.model_fn(cfg) returning an nn.Module")
+        self.model.to(self.device)
+
+        # criterion
+        if callable(self.cfg.criterion_fn):
+            self.criterion = self.cfg.criterion_fn()
+        else:
+            # default: cross entropy
+            self.criterion = nn.CrossEntropyLoss(**self.cfg.criterion_kwargs)
+
+        # dataloaders
+        if callable(self.cfg.dataloader_fn):
+            loaders = self.cfg.dataloader_fn(self.cfg)
+            if isinstance(loaders, tuple) and (2 <= len(loaders) <= 3):
+                self.train_loader, self.val_loader = loaders[0], loaders[1]
+                self.test_loader = loaders[2] if len(loaders) == 3 else None
+            else:
+                raise ValueError("dataloader_fn must return (train_loader, val_loader, [test_loader])")
+        else:
+            raise NotImplementedError("Provide cfg.dataloader_fn(cfg) returning dataloaders")
+
+        # optimizer
+        self.optimizer = self._build_optimizer()
+
+        # scheduler (optional)
+        self.scheduler = self._build_scheduler()
+
+        # AMP scaler
+        if self.cfg.use_amp:
+            self.scaler = torch.amp.GradScaler()
+
+        # optionally resume
+        if self.cfg.resume_from:
+            self.load_checkpoint(self.cfg.resume_from)
+
+        self.logger.info("Build complete: device=%s, model=%s", self.device, type(self.model).__name__)
+
+    def _build_optimizer(self):
+        params = [p for p in self.model.parameters() if p.requires_grad]
+        if self.cfg.optimizer.lower() in ('adam', 'adamw'):
+            opt_cls = optim.AdamW if self.cfg.optimizer.lower() == 'adamw' else optim.Adam
+            return opt_cls(params, lr=self.cfg.lr, weight_decay=self.cfg.weight_decay)
+        elif self.cfg.optimizer.lower() == 'sgd':
+            return optim.SGD(params, lr=self.cfg.lr, momentum=0.9, weight_decay=self.cfg.weight_decay)
+        else:
+            raise ValueError(f"Unknown optimizer: {self.cfg.optimizer}")
+
+    def _build_scheduler(self):
+        sch = None
+        s = self.cfg.scheduler
+        if not s:
+            return None
+        if s.type == 'step':
+            sch = optim.lr_scheduler.StepLR(self.optimizer, step_size=s.step_size, gamma=s.gamma)
+        elif s.type == 'cosine':
+            sch = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.cfg.epochs)
+        elif s.type == 'reduce_on_plateau':
+            sch = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=s.patience)
+        else:
+            self.logger.warning("Unknown scheduler type: %s", s.type)
+        return sch
+
+    # ---------- Training / evaluation ----------
+    def train(self):
+        self.logger.info("Starting training for %d epochs", self.cfg.epochs)
+        for epoch in range(1, self.cfg.epochs + 1):
+            t0 = time.time()
+            train_stats = self.train_one_epoch(epoch)
+            val_stats = self.evaluate(epoch)
+
+            # logging
+            self.history['train_loss'].append(train_stats.get('loss', None))
+            self.history['val_loss'].append(val_stats.get('loss', None))
+
+            # scheduler step (handle reduce_on_plateau separately)
+            if self.scheduler is not None and not isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step()
+
+            # save checkpoint
+            if epoch % self.cfg.save_every == 0:
+                metric_for_save = val_stats.get(self.cfg.metric)
+                self.save_checkpoint(epoch, metric_for_save)
+
+            dt = time.time() - t0
+            self.logger.info("Epoch %03d | time %.1fs | train_loss %.4f | val_loss %.4f | val_metric %s",
+                              epoch, dt, train_stats.get('loss', float('nan')), val_stats.get('loss', float('nan')),
+                              str(val_stats.get('metric', None)))
+
+        self.logger.info("Training finished. Best metric: %s", self.best_metric)
+
+    def train_one_epoch(self, epoch: int) -> Dict[str, float]:
+        """Default training loop. Override for custom tasks.
+
+        Returns a dict of statistics (must contain 'loss').
+        """
+        self.model.train()
+        running_loss = 0.0
+        n_examples = 0
+
+        pbar = tqdm(self.train_loader, desc=f"Train {epoch}")
+        for batch in pbar:
+            # Expectation: user dataloader yields a tuple (inputs..., labels)
+            # You can adapt these lines to your use-case. For GNNs using torch_geometric,
+            # you might receive a Batch object where `batch.x, batch.edge_index, batch.batch`
+            inputs, labels = self._unpack_batch(batch)
+            inputs = self._to_device(inputs)
+            labels = labels.to(self.device)
+
+            self.optimizer.zero_grad()
+            with torch.amp.autocast('cuda',enabled=self.cfg.use_amp):
+                outputs = self.model(*inputs) if isinstance(inputs, (list, tuple)) else self.model(inputs)
+                # user-provided criterion must accept (outputs, labels)
+                loss = self.criterion(outputs, labels)
+
+            # backward
+            if self.cfg.use_amp:
+                assert self.scaler is not None
+                self.scaler.scale(loss).backward()
+                if self.cfg.grad_clip:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                if self.cfg.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                self.optimizer.step()
+
+            # bookkeeping
+            batch_size = self._get_batch_size(batch)
+            running_loss += loss.item() * batch_size
+            n_examples += batch_size
+            avg_loss = running_loss / max(1, n_examples)
+            pbar.set_postfix(loss=avg_loss)
+
+        return {"loss": avg_loss}
+
+    def evaluate(self, epoch: Optional[int] = None) -> Dict[str, Any]:
+        """Evaluate on validation set. Returns dict with 'loss' and optionally 'metric'."""
+        self.model.eval()
+        running_loss = 0.0
+        n_examples = 0
+        all_preds = []
+        all_targets = []
+
+        pbar = tqdm(self.val_loader, desc=f"Val {epoch}" if epoch else "Val")
+        with torch.no_grad():
+            for batch in pbar:
+                inputs, labels = self._unpack_batch(batch)
+                inputs = self._to_device(inputs)
+                labels = labels.to(self.device)
+                with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
+                    outputs = self.model(*inputs) if isinstance(inputs, (list, tuple)) else self.model(inputs)
+                    loss = self.criterion(outputs, labels)
+
+                # collect predictions (assume outputs are logits)
+                if isinstance(outputs, tuple) or isinstance(outputs, list):
+                    logits = outputs[0]
+                else:
+                    logits = outputs
+                preds = torch.argmax(logits, dim=-1)
+                all_preds.append(preds.detach().cpu())
+                all_targets.append(labels.detach().cpu())
+
+                batch_size = self._get_batch_size(batch)
+                running_loss += loss.item() * batch_size
+                n_examples += batch_size
+
+        avg_loss = running_loss / max(1, n_examples)
+        all_preds = torch.cat(all_preds, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+
+        metrics = {}
+        if callable(self.cfg.metric_fn):
+            try:
+                metrics = self.cfg.metric_fn(all_preds, all_targets)
+            except Exception as e:
+                self.logger.warning("metric_fn failed: %s", e)
+        # as convenience: if metric_fn didn't provide 'metric' but provided 'accuracy'
+        metric_val = metrics.get('metric') or metrics.get('accuracy') or None
+
+        # tensorboard
+        if epoch is not None:
+            self.writer.add_scalar('val/loss', avg_loss, epoch)
+            if metric_val is not None:
+                self.writer.add_scalar('val/metric', metric_val, epoch)
+
+        return {"loss": avg_loss, "metric": metric_val, **metrics}
+
+    # ---------- Utilities / I/O ----------
+    def _unpack_batch(self, batch):
+        """Default: batch is (inputs, labels). Override if you use other formats (e.g. torch_geometric Batch).
+        Returns a tuple (inputs, labels) where `inputs` either a single object or tuple passed into model.
+        """
+        if isinstance(batch, (list, tuple)) and len(batch) == 2:
+            return batch[0], batch[1]
+        # torch_geometric.data.Batch
+        try:
+            # common pattern: batch.x, batch.edge_index, batch.batch
+            if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch'):
+                return (batch.x, batch.edge_index, batch.batch), batch.y
+        except Exception:
+            pass
+        raise ValueError("Unknown batch format. Override _unpack_batch to handle your dataloader output.")
+
+    def _get_batch_size(self, batch):
+        # infer a batch-size for loss averaging. Override if needed.
+        if isinstance(batch, (list, tuple)) and len(batch) == 2:
+            x = batch[0]
+            if hasattr(x, 'size'):
+                return x.size(0)
+            # for GNN Batch, batch.batch is a vector of node->graph ids
+        try:
+            if hasattr(batch, 'batch'):
+                # number of graphs = max(batch.batch) + 1
+                return int(batch.batch.max().item()) + 1
+        except Exception:
+            pass
+        return 1
+
+    def _to_device(self, inputs):
+        # send inputs to device. `inputs` could be tuple/list or torch.Tensor or custom Batch
+        if isinstance(inputs, torch.Tensor):
+            return inputs.to(self.device)
+        if isinstance(inputs, (list, tuple)):
+            out = []
+            for x in inputs:
+                if isinstance(x, torch.Tensor):
+                    out.append(x.to(self.device))
+                else:
+                    out.append(x)
+            return tuple(out)
+        # custom Batch object: move it on device if it has `to`
+        if hasattr(inputs, 'to'):
+            return inputs.to(self.device)
+        return inputs
+
+    def save_checkpoint(self, epoch: int, metric: Optional[float] = None):
+        # keep only last k checkpoints
+        fname = f"{self.cfg.name}_epoch{epoch:03d}.pth"
+        path = os.path.join(self.cfg.checkpoint_dir, fname)
+        state = {
+            'epoch': epoch,
+            'model_state': self.model.state_dict(),
+            'optim_state': self.optimizer.state_dict(),
+            'cfg': self._serialize_cfg(),
+            'best_metric': self.best_metric
+        }
+        if self.scaler is not None:
+            state['scaler'] = self.scaler.state_dict()
+        torch.save(state, path)
+        self.logger.info("Saved checkpoint: %s", path)
+
+        # housekeeping: remove old checkpoints keeping last K
+        files = sorted([f for f in os.listdir(self.cfg.checkpoint_dir) if f.startswith(self.cfg.name)])
+        if len(files) > self.cfg.keep_last_k:
+            for f in files[:-self.cfg.keep_last_k]:
+                try:
+                    os.remove(os.path.join(self.cfg.checkpoint_dir, f))
+                except Exception:
+                    pass
+
+    def _serialize_cfg(self):
+        """Return a JSON/serializable-friendly representation of the ExperimentConfig.
+
+        - replaces callable values with a short string description
+        - attempts to keep nested dicts / dataclasses, but falls back to repr() where needed.
+        """
+        serial = {}
+        for k, v in self.cfg.__dict__.items():
+            # skip writer, logger, device, or other non-config runtime objects if present
+            if k in ('writer', 'logger'):
+                continue
+            # represent callables as strings (they are not picklable)
+            if callable(v):
+                try:
+                    name = getattr(v, "__name__", None) or repr(v)
+                except Exception:
+                    name = repr(v)
+                serial[k] = f"<callable {name}>"
+                continue
+
+            # try common serializable types
+            try:
+                # simple attempt: JSON-friendly
+                import json
+                json.dumps(v)
+                serial[k] = v
+            except Exception:
+                # attempt to convert dataclass / SimpleNamespace / nested dicts
+                try:
+                    # for objects like SimpleNamespace or dataclasses return dict of attrs
+                    if hasattr(v, "__dict__"):
+                        sub = {}
+                        for kk, vv in v.__dict__.items():
+                            if callable(vv):
+                                sub[kk] = f"<callable {getattr(vv,'__name__', repr(vv))}>"
+                            else:
+                                try:
+                                    json.dumps(vv)
+                                    sub[kk] = vv
+                                except Exception:
+                                    sub[kk] = repr(vv)
+                        serial[k] = sub
+                    else:
+                        serial[k] = repr(v)
+                except Exception:
+                    serial[k] = repr(v)
+        return serial
+
+    def load_checkpoint(self, path: str):
+        self.logger.info("Loading checkpoint: %s", path)
+        state = torch.load(path, map_location=self.device)
+        self.model.load_state_dict(state['model_state'])
+        self.optimizer.load_state_dict(state['optim_state'])
+        if 'scaler' in state and self.scaler is not None:
+            self.scaler.load_state_dict(state['scaler'])
+        self.best_metric = state.get('best_metric', self.best_metric)
+        return state
+
+class ExperimentSSGNN(Experiment):
+    def __init__(self, cfg):
+        super().__init__(cfg)
+
+    def train_one_epoch(self, epoch: int) -> Dict[str, float]:
+        """Default training loop. Override for custom tasks.
+
+        Returns a dict of statistics (must contain 'loss').
+        """
+        self.model.train()
+        running_loss = 0.0
+        n_examples = 0
+
+        pbar = tqdm(self.train_loader, desc=f"Train {epoch}")
+        for batch in pbar:
+            # Expectation: user dataloader yields a tuple (inputs..., labels)
+            # You can adapt these lines to your use-case. For GNNs using torch_geometric,
+            # you might receive a Batch object where `batch.x, batch.edge_index, batch.batch`
+            inputs, labels = self._unpack_batch(batch)
+            inputs = self._to_device(inputs)
+            labels = labels.to(self.device)
+
+            self.optimizer.zero_grad()
+            with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
+                logits, probs, preds, one_hot = self.model(*inputs) 
+                # user-provided criterion must accept (outputs, labels)
+                loss = self.criterion(logits, labels)
+
+            # backward
+            if self.cfg.use_amp:
+                assert self.scaler is not None
+                self.scaler.scale(loss).backward()
+                if self.cfg.grad_clip:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                if self.cfg.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                self.optimizer.step()
+
+            # bookkeeping
+            batch_size = self._get_batch_size(batch)
+            running_loss += loss.item() * batch_size
+            n_examples += batch_size
+            avg_loss = running_loss / max(1, n_examples)
+            pbar.set_postfix(loss=avg_loss)
+
+        return {"loss": avg_loss}
+
+    def evaluate(self, epoch: Optional[int] = None) -> Dict[str, Any]:
+        """Evaluate on validation set. Returns dict with 'loss' and optionally 'metric'."""
+        self.model.eval()
+        running_loss = 0.0
+        n_examples = 0
+        all_probs = []
+        all_targets = []
+
+        pbar = tqdm(self.val_loader, desc=f"Val {epoch}" if epoch else "Val")
+        with torch.no_grad():
+            for batch in pbar:
+                inputs, labels = self._unpack_batch(batch)
+                inputs = self._to_device(inputs)
+                labels = labels.to(self.device)
+                with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
+                    # model returns (logits, probs, preds, one_hot)
+                    logits, probs, preds, one_hot = (
+                        self.model(*inputs) if isinstance(inputs, (list, tuple)) else self.model(inputs)
+                    )
+                    loss = self.criterion(logits, labels)
+
+                # collect probabilities (scores) and targets
+                all_probs.append(probs.detach().cpu())
+                all_targets.append(labels.detach().cpu())
+
+                batch_size = self._get_batch_size(batch)
+                running_loss += loss.item() * batch_size
+                n_examples += batch_size
+
+        avg_loss = running_loss / max(1, n_examples)
+        all_probs = torch.cat(all_probs, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+
+        metrics = {}
+        if callable(self.cfg.metric_fn):
+            try:
+                # IMPORTANT: average_precision_score expects (y_true, y_score)
+                # y_true shape: (N,) for binary or (N, n_classes) for multilabel
+                # y_score shape: same as y_true for multilabel
+                metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
+            except Exception as e:
+                self.logger.warning("metric_fn failed: %s", e)
+        metric_val = metrics.get('AP') or metrics.get('ap') or metrics.get('metric')
+
+        # tensorboard
+        if epoch is not None:
+            self.writer.add_scalar('val/loss', avg_loss, epoch)
+            if metric_val is not None:
+                self.writer.add_scalar('val/metric', metric_val, epoch)
+
+        return {"loss": avg_loss, "metric": metric_val, **metrics}
+
+    def _unpack_batch(self, batch):
+        """Default: batch is (inputs, labels). Override if you use other formats (e.g. torch_geometric Batch).
+        Returns a tuple (inputs, labels) where `inputs` either a single object or tuple passed into model.
+        """
+        if not hasattr(batch, 'x') and hasattr(batch,'edge_index') and hasattr(batch,'ptr') and hasattr(batch, 'y'):
+            raise ValueError("Unknown batch format")
+        if not hasattr(self.cfg.model_config, 'subgraph_param'):
+            raise ValueError("Subgraph parameters required in config.")
+        k = self.cfg.model_config.subgraph_param.k
+        m = self.cfg.model_config.subgraph_param.m
+        # torch_geometric.data.Batch
+        try:
+            if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch') and hasattr(batch, 'ptr'):
+                x = batch.x.float()
+                nodes_t, edge_index_t, edge_ptr_t, graph_id_t = \
+                    ugs_sampler.sample_batch(batch.edge_index.cpu(), batch.ptr.cpu(), m, k)
+                return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t, k), batch.y.float()
+        except Exception as e:
+            # fallback: produce placeholders for all graphs in this batch (safe)
+            G = int(batch.ptr.size(0) - 1)
+            nodes_t, edge_index_t, edge_ptr_t, graph_id_t = self.make_placeholders(G, m, k, self.cfg.device)
+            # log warn
+            print(f"[warn] sampler failed; using placeholders for batch: {e}")
+            return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t,k), batch.y.float()
+
+    def _make_placeholders(self, G, m_per_graph, k, device):
+        """Return placeholder sampler outputs for G graphs (all -1s / empty edges)."""
+        B_total = G * m_per_graph
+        nodes_t = torch.full((B_total, k), -1, dtype=torch.long)        # CPU or device
+        edge_index_t = torch.empty((2, 0), dtype=torch.long)            # no edges
+        edge_ptr_t = torch.zeros((B_total + 1,), dtype=torch.long)     # all zeros -> empty blocks
+        graph_id_t = torch.repeat_interleave(torch.arange(G, dtype=torch.long), torch.tensor([m_per_graph]*G))
+        return nodes_t, edge_index_t, edge_ptr_t, graph_id_t
