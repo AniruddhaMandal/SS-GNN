@@ -1,33 +1,33 @@
 {
-    "name":"Default Experiment",
+    "name":"Vanilla Experiment",
     "dataset_name": "Peptides-func",
-    "model_name": "SS-GNN",
+    "model_name": "VANILLA",
 
     "model_config": 
     {
-        "name": "ss-gnn",
+        "name": "vanilla",
         "feature_dim": 9,
-        "hidden_dim": 256,
-        "mpnn_layers": 3,
+        "hidden_dim": 208,
+        "mpnn_layers": 6,
         "dropout": 0.1,
         "transformer_heads": 4,
         "transformer_layers": 2,
         "transformer_dim": 256,
         "out_dim": 10,
         "subgraph_param": {
-            "k": 5,
-            "m": 100
+            "k": 15,
+            "m": 1000
         }
     },
     "train": 
     {
         "threshold": 0.5,
-        "epochs": 20,
+        "epochs": 2,
         "train_batch_size": 64,
         "val_batch_size": 64,
         "lr": 1e-3,
         "weight_decay": 1e-5,
-        "optimizer": "adam",  
+        "optimizer": "adamw",  
         "scheduler": {
             "type":"reduce_on_plateau",
             "patience":20

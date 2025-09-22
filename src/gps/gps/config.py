@@ -77,6 +77,14 @@ def build_model(cfg: ExperimentConfig):
                                     dropout=cfg.model_config.dropout)
         return model
     
+    if cfg.model_name == "VANILLA":
+        from gps.models.vanilla import GINClassifier
+        model = GINClassifier(in_channels=cfg.model_config.feature_dim,
+                              hidden_dim=cfg.model_config.hidden_dim,
+                              num_classes=cfg.model_config.out_dim,
+                              dropout=cfg.model_config.dropout)
+        return model
+
     else:
         raise ValueError(f"Unknown `model_name`:{cfg.model_name}")
 
