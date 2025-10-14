@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GINConv, global_add_pool
+from gps.registry import register_model
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
@@ -133,7 +134,7 @@ class GINClassifier(nn.Module):
         preds = probs.argmax(dim=1)
         one_hot = F.one_hot(preds, num_classes=self.num_classes).to(dtype=logits.dtype)
 
-        return logits,probs,preds,one_hot
+        return logits,probs,preds.float(),one_hot
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ import shutil
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
+import random 
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -43,56 +45,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import ugs_sampler
 from tqdm.auto import tqdm
-
-# ------- Configuration dataclass -------
-
-@dataclass
-class ExperimentConfig:
-    # Callables
-    model_fn: Optional[Callable[["ExperimentConfig"], nn.Module]] = None
-    dataloader_fn: Optional[Callable[["ExperimentConfig"], Tuple[DataLoader, DataLoader, Optional[DataLoader]]]] = None
-    criterion_fn: Optional[Callable[["ExperimentConfig"], nn.Module]] = None
-    metric_fn: Optional[Callable[[torch.Tensor, torch.Tensor], Dict[str, float]]] = None
-
-    # Model / data identifiers (for logging filenames)
-    name: str = "exp"
-    dataset_name: Optional[str] = None
-    model_name: Optional[str] = None
-    model_config: Optional[dict] = None # example: {"model":{"subgraph_param":{..}, "name": ..,"feature_dim":..,}}
-
-    # Metric and Criterion names
-    metric: Optional[str] = None
-    loss_fn: Optional[str] = None
-
-    # Training hyperparameters
-    epochs: int = 100
-    train_batch_size: int = 32
-    val_batch_size: int = 64
-    lr: float = 1e-3
-    weight_decay: float = 0.0
-    optimizer: str = "adam"  # 'adam' or 'adamw' or 'sgd'
-    scheduler: Optional[Dict[str, Any]] = None  # example: {'type':'step','step_size':30,'gamma':0.1}
-
-    # Misc
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    seed: int = 42
-    num_workers: int = 4
-    log_dir: str = "logs"
-    checkpoint_dir: str = "checkpoints"
-    save_every: int = 1
-    keep_last_k: int = 3
-
-    # Numerical/stability
-    use_amp: bool = False
-    grad_clip: Optional[float] = None  # clip norm value
-
-    # Extra container for user-specific kwargs
-    model_kwargs: Dict[str, Any] = field(default_factory=dict)
-    dataloader_kwargs: Dict[str, Any] = field(default_factory=dict)
-    criterion_kwargs: Dict[str, Any] = field(default_factory=dict)
-
-    # Resume
-    resume_from: Optional[str] = None
+from . import ExperimentConfig
 
 # ------- Experiment class -------
 
@@ -185,7 +138,6 @@ class Experiment:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
-        import random, numpy as np
         random.seed(seed)
         np.random.seed(seed)
 
@@ -258,9 +210,17 @@ class Experiment:
             self.logger.warning("Unknown scheduler type: %s", s.type)
         return sch
 
+    def _initial_fault_check(self):
+        _batch = next(iter(self.train_loader))
+        _feat_dim = _batch.x.size(-1)
+        _model_in_dim = self.cfg.model_config.feature_dim
+        if(_model_in_dim != _feat_dim):
+            raise ValueError(f"model input dim({_model_in_dim}) not equal to node feature dim({_feat_dim}).")
+
     # ---------- Training / evaluation ----------
     def train(self):
         self.logger.info("Starting training for %d epochs", self.cfg.epochs)
+        self._initial_fault_check()
         for epoch in range(1, self.cfg.epochs + 1):
             t0 = time.time()
             train_stats = self.train_one_epoch(epoch)
@@ -306,15 +266,20 @@ class Experiment:
             # Expectation: user dataloader yields a tuple (inputs..., labels)
             # You can adapt these lines to your use-case. For GNNs using torch_geometric,
             # you might receive a Batch object where `batch.x, batch.edge_index, batch.batch`
-            inputs, labels = self._unpack_batch(batch)
+            # If subgraph sampling is required then return: 
+            # `x_global`, `nodes_t`, `edge_index_t`, `edge_ptr_t`, `graph_id_t`, `k`
+            inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)
             inputs = self._to_device(inputs)
             labels = labels.to(self.device)
 
             self.optimizer.zero_grad()
             with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
                 logits, probs, preds, one_hot = self.model(*inputs) 
-                # user-provided criterion must accept (outputs, labels)
-                loss = self.criterion(logits, labels)
+                #user-provided criterion must accept (outputs, labels)
+                if self.cfg.task == "Binary-Classification":
+                    loss = self.criterion(logits, labels.long())
+                if self.cfg.task == "Multi-Lable-Binary-Classification":
+                    loss = self.criterion(logits, labels.float())
 
             # backward
             if self.cfg.use_amp:
@@ -347,6 +312,7 @@ class Experiment:
         n_examples = 0
         all_probs = []
         all_targets = []
+        all_preds = []
 
         if test_data:
             loader = self.test_loader
@@ -356,18 +322,20 @@ class Experiment:
         pbar = tqdm(loader, desc=f"Val {epoch}" if epoch else "Val")
         with torch.no_grad():
             for batch in pbar:
-                inputs, labels = self._unpack_batch(batch)
+                inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)
                 inputs = self._to_device(inputs)
                 labels = labels.to(self.device)
                 with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
-                    # model returns (logits, probs, preds, one_hot)
-                    logits, probs, preds, one_hot = (
-                        self.model(*inputs) if isinstance(inputs, (list, tuple)) else self.model(inputs)
-                    )
-                    loss = self.criterion(logits, labels)
+                    logits, probs, preds, one_hot = self.model(*inputs) 
+                    #user-provided criterion must accept (outputs, labels)
+                    if self.cfg.task == "Binary-Classification":
+                        loss = self.criterion(logits, labels.long())
+                    if self.cfg.task == "Multi-Lable-Binary-Classification":
+                        loss = self.criterion(logits, labels.float())
 
-                # collect probabilities (scores) and targets
+                # collect probabilities (scores), preds and targets
                 all_probs.append(probs.detach().cpu())
+                all_preds.append(preds.detach().cpu())
                 all_targets.append(labels.detach().cpu())
 
                 batch_size = self._get_batch_size(batch)
@@ -376,6 +344,7 @@ class Experiment:
 
         avg_loss = running_loss / max(1, n_examples)
         all_probs = torch.cat(all_probs, dim=0)
+        all_preds = torch.cat(all_preds,dim=0)
         all_targets = torch.cat(all_targets, dim=0)
 
         metrics = {}
@@ -384,10 +353,14 @@ class Experiment:
                 # IMPORTANT: average_precision_score expects (y_true, y_score)
                 # y_true shape: (N,) for binary or (N, n_classes) for multilabel
                 # y_score shape: same as y_true for multilabel
-                metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
+                if self.cfg.task == "Multi-Lable-Binary-Classification":
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
+                if self.cfg.task == "Binary-Classification":
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds.numpy())
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
-        metric_val = metrics.get('AP') or metrics.get('ap') or metrics.get('metric')
+        print("Metrics: ",metrics)
+        metric_val = metrics.get(self.cfg.metric)
 
         # tensorboard
         if epoch is not None:
@@ -398,23 +371,24 @@ class Experiment:
         return {"loss": avg_loss, "metric": metric_val, **metrics}
 
     # ---------- Utilities / I/O ----------
-    def _unpack_batch(self, batch):
+    def _unpack_batch(self, batch, subgraph_sampling=False):
         """Default: batch is (inputs, labels). Override if you use other formats (e.g. torch_geometric Batch).
         Returns a tuple (inputs, labels) where `inputs` either a single object or tuple passed into model.
         """
-        if self.cfg.model_name == "VANILLA":
+        if not subgraph_sampling:
             if isinstance(batch, (list, tuple)) and len(batch) == 2:
                 return batch[0], batch[1]
             # torch_geometric.data.Batch
             try:
                 # common pattern: batch.x, batch.edge_index, batch.batch
                 if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch'):
+                    batch.y = batch.y.float()
                     return (batch.x, batch.edge_index, batch.batch), batch.y
             except Exception:
                 pass
             raise ValueError("Unknown batch format. Override _unpack_batch to handle your dataloader output.")
         
-        if self.cfg.model_name == "SS-GNN":
+        if subgraph_sampling:
             if not hasattr(batch, 'x') and hasattr(batch,'edge_index') and hasattr(batch,'ptr') and hasattr(batch, 'y'):
                 raise ValueError("Unknown batch format")
             if not hasattr(self.cfg.model_config, 'subgraph_param'):
@@ -427,7 +401,8 @@ class Experiment:
                     x = batch.x.float()
                     nodes_t, edge_index_t, edge_ptr_t, graph_id_t = \
                         ugs_sampler.sample_batch(batch.edge_index.cpu(), batch.ptr.cpu(), m, k)
-                    return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t, k), batch.y.float()
+                    batch.y = batch.y.float()
+                    return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t, k), batch.y
             except Exception as e:
                 # fallback: produce placeholders for all graphs in this batch (safe)
                 G = int(batch.ptr.size(0) - 1)
@@ -435,9 +410,6 @@ class Experiment:
                 # log warn
                 print(f"[warn] sampler failed; using placeholders for batch: {e}")
                 return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t,k), batch.y.float()
-
-        else:
-            raise ValueError("Unknown model type in `_unpack_batch`")
 
 
     def _get_batch_size(self, batch):
@@ -478,7 +450,6 @@ class Experiment:
         path = os.path.join(self.cfg.checkpoint_dir, fname)
         _fname_best_model = f"best_model.pth"
         _path_best_model = os.path.join(self.cfg.checkpoint_dir, _fname_best_model)
-        print("Check Point dir",self.cfg.checkpoint_dir)
         if(self.best_metric<metric):
             _best_metric = metric
         else:
