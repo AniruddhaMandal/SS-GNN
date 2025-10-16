@@ -34,7 +34,7 @@ import json
 import shutil
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Literal 
 import random 
 import numpy as np
 
@@ -252,8 +252,10 @@ class Experiment:
         fname_best_model = f"best_model.pth"
         path_best_model = os.path.join(self.cfg.checkpoint_dir, fname_best_model)
         self.load_checkpoint(path_best_model)
-        best_stats = self.evaluate(test_data=True)
-        self.logger.info("Best model metric \n\tTest data: %s. \n\tVal data: %s", best_stats.get('metric', None), self.best_metric)
+        test_best_stats = self.evaluate(split='test')
+        train_best_stats = self.evaluate(split='train')
+        self.logger.info("Best model metric \n\tTest data: %s. \n\tTrain data: %s. \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric',
+                                                                                                                                                           None),self.best_metric)
 
     def train_one_epoch(self, epoch: int) -> Dict[str, float]:
         """Default training loop. Override for custom tasks.
@@ -308,7 +310,7 @@ class Experiment:
 
         return {"loss": avg_loss}
 
-    def evaluate(self, epoch: Optional[int] = None, test_data: Optional[bool] = False) -> Dict[str, Any]:
+    def evaluate(self, epoch: Optional[int] = None, split: Optional[Literal['test', 'train', 'val']] = 'val') -> Dict[str, Any]:
         """Evaluate on validation set. Returns dict with 'loss' and optionally 'metric'."""
         self.model.eval()
         running_loss = 0.0
@@ -316,13 +318,18 @@ class Experiment:
         all_probs = []
         all_targets = []
         all_preds = []
+        loaders = {
+            "test": self.test_loader,
+            "train": self.train_loader,
+            "val": self.val_loader,
+        }
 
-        if test_data:
-            loader = self.test_loader
-        else:
-            loader = self.val_loader
+        if split not in loaders:
+            raise ValueError(f"Unknown split type ({split}) in evaluate.")
 
-        pbar = tqdm(loader, desc=f"Val {epoch}" if epoch else "Val")
+        loader = loaders[split]
+
+        pbar = tqdm(loader, desc=f"{split} {epoch}" if epoch else f"{split}")
         with torch.no_grad():
             for batch in pbar:
                 inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)
