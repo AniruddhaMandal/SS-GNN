@@ -1,169 +1,118 @@
-"""
-Vanilla GIN (Graph Isomorphism Network) classifier implemented with PyTorch + PyTorch Geometric.
-
-Outputs (in forward):
- - logits: raw class scores (shape [batch_size, num_classes])
- - probs: softmax probabilities over classes (shape [batch_size, num_classes])
- - preds: integer class predictions (shape [batch_size])
- - one_hot: one-hot encoding of preds (shape [batch_size, num_classes], float)
-
-Usage notes:
- - Expects input as (x, edge_index, batch) like a standard PyG model.
- - For node-level tasks, remove global pooling and adapt classifier accordingly.
- - Requires `torch` and `torch_geometric` installed.
-
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GINConv, global_add_pool
-from gps.registry import register_model
+from torch_geometric.nn import (
+    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool
+)
+from torch_geometric.nn.norm import BatchNorm
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
-    """Create a simple MLP used inside GINConv.
-
-    Args:
-        in_dim (int): input dimension
-        hidden_dim (int): hidden dimension for intermediate layers
-        out_dim (int): output dimension
-        num_layers (int): total linear layers (>=1)
-        activate_last (bool): whether to apply ReLU on last layer
-    Returns:
-        nn.Sequential MLP
-    """
-    assert num_layers >= 1
     layers = []
     if num_layers == 1:
-        layers.append(nn.Linear(in_dim, out_dim))
-        if activate_last:
-            layers.append(nn.ReLU())
+        layers += [nn.Linear(in_dim, out_dim)]
+        if activate_last: layers += [nn.ReLU()]
     else:
-        layers.append(nn.Linear(in_dim, hidden_dim))
-        layers.append(nn.ReLU())
+        layers += [nn.Linear(in_dim, hidden_dim), nn.ReLU()]
         for _ in range(num_layers - 2):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
-        layers.append(nn.Linear(hidden_dim, out_dim))
-        if activate_last:
-            layers.append(nn.ReLU())
+            layers += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
+        layers += [nn.Linear(hidden_dim, out_dim)]
+        if activate_last: layers += [nn.ReLU()]
     return nn.Sequential(*layers)
 
 
-class GINClassifier(nn.Module):
-    """A compact, configurable GIN classifier for graph-level classification.
-
-    Parameters
-    ----------
-    in_channels : int
-        Dimensionality of input node features.
-    hidden_dim : int
-        Hidden dimension for GIN layers and final classifier.
-    num_classes : int
-        Number of classes for classification.
-    num_layers : int
-        Number of GIN layers (>=1).
-    mlp_layers : int
-        Number of layers in the internal MLP used by each GINConv (>=1).
-    dropout : float
-        Dropout on the pooled graph representation before classifier.
+class VanillaGNNClassifier(nn.Module):
     """
-
+    A flexible graph-level classifier:
+      - conv_type: 'gine' (uses edge_attr), 'gin', 'gcn', 'sage', 'gatv2'
+      - For Peptides-func (multi-label), uses BCE-with-logits style outputs.
+    """
     def __init__(self,
                  in_channels: int,
+                 edge_dim: int,
                  hidden_dim: int,
-                 num_classes: int,
-                 num_layers: int = 3,
+                 num_classes: int = 10,
+                 num_layers: int = 5,
                  mlp_layers: int = 2,
-                 dropout: float = 0.5):
+                 dropout: float = 0.1,
+                 conv_type: str = 'gine'):
         super().__init__()
-        assert num_layers >= 1
-
+        conv_type = conv_type.lower()
+        assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
+        self.conv_type = conv_type
         self.num_layers = num_layers
         self.dropout = dropout
         self.num_classes = num_classes
 
-        # First GIN layer maps input features -> hidden
+        # Project inputs to hidden_dim once so all layers are width-matched.
+        self.node_proj = nn.Linear(in_channels, hidden_dim)
+
+        # If using edge features (only GINE uses them directly)
+        self.use_edges = (conv_type == 'gine')
+        if self.use_edges:
+            # Project raw edge_attr -> hidden_dim once (works for all layers)
+            self.edge_proj = nn.Linear(edge_dim, hidden_dim)
+
+        # Build layers
         self.convs = nn.ModuleList()
-        self.batch_norms = nn.ModuleList()
+        self.bns   = nn.ModuleList()
+        for layer in range(num_layers):
+            self.convs.append(self._make_conv(hidden_dim, hidden_dim, mlp_layers))
+            self.bns.append(BatchNorm(hidden_dim))
 
-        # Layer 0
-        mlp0 = make_mlp(in_channels, hidden_dim, hidden_dim, num_layers=mlp_layers)
-        self.convs.append(GINConv(mlp0))
-        self.batch_norms.append(nn.BatchNorm1d(hidden_dim))
-
-        # Remaining layers
-        for _ in range(1, num_layers):
-            mlp = make_mlp(hidden_dim, hidden_dim, hidden_dim, num_layers=mlp_layers)
-            self.convs.append(GINConv(mlp))
-            self.batch_norms.append(nn.BatchNorm1d(hidden_dim))
-
-        # Final classifier on pooled graph representation
+        # Head
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=self.dropout),
+            nn.Dropout(p=dropout),
             nn.Linear(hidden_dim, num_classes)
         )
 
-    def forward(self, x, edge_index, batch):
-        """Forward pass.
+    def _make_conv(self, in_dim, out_dim, mlp_layers):
+        if self.conv_type == 'gine':
+            mlp = make_mlp(in_dim, in_dim, out_dim, num_layers=mlp_layers)
+            return GINEConv(nn=mlp, train_eps=True)  # we project edge_attr ourselves
+        if self.conv_type == 'gin':
+            mlp = make_mlp(in_dim, in_dim, out_dim, num_layers=mlp_layers)
+            return GINConv(nn=mlp, train_eps=True)
+        if self.conv_type == 'gcn':
+            return GCNConv(in_dim, out_dim, cached=False, normalize=True)
+        if self.conv_type == 'sage':
+            return SAGEConv(in_dim, out_dim)
+        if self.conv_type == 'gatv2':
+            return GATv2Conv(in_dim, out_dim, heads=1, concat=True)  # keeps dim = out_dim
+        raise ValueError("Unknown conv_type")
 
-        Args:
-            x: node features tensor of shape [num_nodes, in_channels]
-            edge_index: edge index tensor of shape [2, num_edges]
-            batch: batch vector mapping nodes to example graph index [num_nodes]
-
-        Returns:
-            dict with keys: logits, probs, preds, one_hot
+    # ---------- FORWARD ----------
+    def forward(self, x, edge_index, batch, edge_attr=None):
         """
-        h = x
-        for conv, bn in zip(self.convs, self.batch_norms):
-            h = conv(h, edge_index)
-            # batch norm expects shape [N, C]
+        x: [N, in_channels]
+        edge_index: [2, E]
+        batch: [N]
+        edge_attr: [E, edge_dim]  (required if conv_type='gine')
+        """
+        h = self.node_proj(x)
+        if self.use_edges:
+            if edge_attr is None:
+                raise ValueError("edge_attr is required for conv_type='gine'.")
+            e = self.edge_proj(edge_attr)
+
+        for conv, bn in zip(self.convs, self.bns):
+            h_res = h
+            if self.use_edges:
+                h = conv(h, edge_index, e)          # GINE expects edge features
+            else:
+                h = conv(h, edge_index)             # GIN/GCN/SAGE/GATv2 ignore edge_attr
             h = bn(h)
             h = F.relu(h)
+            h = h + h_res                           # residual (dims match)
 
-        # Pool to get graph-level representation
-        g = global_add_pool(h, batch)  # shape [batch_size, hidden_dim]
+        g = global_mean_pool(h, batch)
+        logits = self.classifier(g)                 # [B, num_classes]
 
-        logits = self.classifier(g)  # [batch_size, num_classes]
+        # Multi-label outputs (Peptides-func)
+        probs = torch.sigmoid(logits)
+        preds = (probs > 0.5).float()
+        one_hot = preds
 
-        probs = F.softmax(logits, dim=1)
-        preds = probs.argmax(dim=1)
-        one_hot = F.one_hot(preds, num_classes=self.num_classes).to(dtype=logits.dtype)
-
-        return logits,probs,preds.float(),one_hot
-
-
-if __name__ == "__main__":
-    # quick smoke test with random data
-    try:
-        from torch_geometric.data import Data, Batch
-    except Exception:
-        print("torch_geometric not found. Install torch_geometric to run the smoke test.")
-    else:
-        num_graphs = 4
-        nodes_per_graph = 6
-        in_channels = 8
-        num_classes = 3
-
-        # create a tiny batched dataset: simple chain per graph
-        data_list = []
-        for gi in range(num_graphs):
-            n = nodes_per_graph
-            x = torch.randn((n, in_channels))
-            # create a chain
-            edge_index = torch.stack([torch.arange(0, n - 1), torch.arange(1, n)])
-            edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
-            data_list.append(Data(x=x, edge_index=edge_index))
-
-        batch = Batch.from_data_list(data_list)
-
-        model = GINClassifier(in_channels=in_channels, hidden_dim=32, num_classes=num_classes)
-        out = model(batch.x, batch.edge_index, batch.batch)
-        print("logits.shape:", out['logits'].shape)
-        print("probs.sum(dim=1) (should be 1):", out['probs'].sum(dim=1))
-        print("preds:", out['preds'])
-        print("one_hot.shape:", out['one_hot'].shape)
+        return logits, probs, preds, one_hot

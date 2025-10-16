@@ -1,15 +1,15 @@
 {
-    "name":"Baseline: Peptides-func GINE",
+    "name":"Baseline: Peptides-func VANILLA GCN",
     "dataset_name": "Peptides-func",
-    "model_name": "VANILLA-GINE",
+    "model_name": "VANILLA",
     "task": "Multi-Lable-Binary-Classification",
 
     "model_config": 
     {
         "name": "vanilla",
+        "mpnn_type": "gcn",
         "node_feature_dim": 9,
-        "edge_feature_dim": 3,
-        "hidden_dim": 208,
+        "hidden_dim": 300,
         "mpnn_layers": 5,
         "dropout": 0.1,
         "out_dim": 10

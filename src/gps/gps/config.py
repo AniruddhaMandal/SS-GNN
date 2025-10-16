@@ -37,6 +37,14 @@ def set_config(cfg):
     if exp_config.model_config.subgraph_sampling:
         assert hasattr(exp_config.model_config, "subgraph_param"), "subgraph sampling parameters missing!"
     
+    #edge dimension 
+    if not hasattr(exp_config.model_config, 'edge_feature_dim'):
+        exp_config.model_config.edge_feature_dim = None
+    
+    # mpnn type
+    if not hasattr(exp_config.model_config, 'mpnn_type'):
+        exp_config.model_config.mpnn_type = 'gcn'
+
     # Metric and Criterion names
     exp_config.metric = cfg.train.metric
     exp_config.loss_fn = cfg.train.loss_fn

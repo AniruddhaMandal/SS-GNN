@@ -213,7 +213,10 @@ class Experiment:
     def _initial_fault_check(self):
         _batch = next(iter(self.train_loader))
         _feat_dim = _batch.x.size(-1)
-        _model_in_dim = self.cfg.model_config.feature_dim
+        if hasattr(self.cfg.model_config, 'feature_dim'):
+            _model_in_dim = self.cfg.model_config.feature_dim
+        if hasattr(self.cfg.model_config, 'node_feature_dim'):
+            _model_in_dim = self.cfg.model_config.node_feature_dim
         if(_model_in_dim != _feat_dim):
             raise ValueError(f"model input dim({_model_in_dim}) not equal to node feature dim({_feat_dim}).")
 
