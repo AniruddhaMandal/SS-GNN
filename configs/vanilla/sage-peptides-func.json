@@ -1,5 +1,5 @@
 {
-    "name":"Baseline: Peptides-func VANILLA GCN",
+    "name":"Baseline: Peptides-func VANILLA SAGE",
     "dataset_name": "Peptides-func",
     "model_name": "VANILLA",
     "task": "Multi-Lable-Binary-Classification",
