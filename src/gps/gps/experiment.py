@@ -254,8 +254,8 @@ class Experiment:
         self.load_checkpoint(path_best_model)
         test_best_stats = self.evaluate(split='test')
         train_best_stats = self.evaluate(split='train')
-        self.logger.info("Best model metric \n\tTest data: %s. \n\tTrain data: %s. \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric',
-                                                                                                                                                           None),self.best_metric)
+        self.logger.info("Best model metric \n\tTest data: %s. \n\tTrain data: %s. \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
+        self.save_result(test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
 
     def train_one_epoch(self, epoch: int) -> Dict[str, float]:
         """Default training loop. Override for custom tasks.
@@ -458,6 +458,13 @@ class Experiment:
         if hasattr(inputs, 'to'):
             return inputs.to(self.device)
         return inputs
+    
+    def save_result(self, test, train, val):
+        result_dir = 'experiment_results'
+        os.makedirs(result_dir, exist_ok=True)
+        save_path = os.path.join(result_dir,f"{self.cfg.name}.txt")
+        with open(save_path, 'w') as f:
+            f.write(f"Best model metric \n\tTest data: {test}. \n\tTrain data: {train}. \n\tVal data: {val}")
 
     def save_checkpoint(self, epoch: int, metric: Optional[float] = None):
         # keep only last k checkpoints

@@ -12,3 +12,4 @@ graph_json_data/
 checkpoints/
 logs/
 cache/
+experiment_results/
