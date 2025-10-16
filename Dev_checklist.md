@@ -1,0 +1,7 @@
+- [] Reproducibility
+    - [] Datasplit
+    - [] Model Parameter 
+- [x] LRGB Baseline
+- [] Add GNN-type in VANILLA
+- []Add pytest for reproducibility
+- [] SS-GNN 

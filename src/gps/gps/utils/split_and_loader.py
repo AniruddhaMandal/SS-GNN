@@ -3,7 +3,7 @@ import os, json, random
 from typing import Dict, Any, Tuple
 import numpy as np
 import torch
-from torch_geometric.data import DataLoader
+from torch_geometric.loader import DataLoader
 from sklearn.model_selection import train_test_split
 
 from .. import ExperimentConfig

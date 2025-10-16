@@ -16,6 +16,11 @@ def build_lrgb(cfg: ExperimentConfig):
     return build_dataloaders_from_dataset(dataset, cfg)
 
 @register_dataset('MUTAG')
+@register_dataset('ENZYMES')
+@register_dataset('PROTEINS')
+@register_dataset('COLLAB')
+@register_dataset('IMDB-BINARY')
+@register_dataset('REDDIT-BINARY')
 def build_tudata(cfg: ExperimentConfig):
     from torch_geometric.datasets import TUDataset
     from torch_geometric.transforms import OneHotDegree, ToUndirected

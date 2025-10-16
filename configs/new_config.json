@@ -1,33 +1,29 @@
 {
-    "name":"Vanilla Experiment",
+    "name":"Baseline: Peptides-func GINE",
     "dataset_name": "Peptides-func",
-    "model_name": "VANILLA",
+    "model_name": "VANILLA-GINE",
+    "task": "Multi-Lable-Binary-Classification",
 
     "model_config": 
     {
         "name": "vanilla",
-        "feature_dim": 9,
+        "node_feature_dim": 9,
+        "edge_feature_dim": 3,
         "hidden_dim": 208,
-        "mpnn_layers": 6,
+        "mpnn_layers": 5,
         "dropout": 0.1,
-        "transformer_heads": 4,
-        "transformer_layers": 2,
-        "transformer_dim": 256,
-        "out_dim": 10,
-        "subgraph_param": {
-            "k": 15,
-            "m": 1000
-        }
+        "out_dim": 10
     },
+
     "train": 
     {
         "threshold": 0.5,
-        "epochs": 2,
+        "epochs": 50,
         "train_batch_size": 64,
         "val_batch_size": 64,
         "lr": 1e-3,
         "weight_decay": 1e-5,
-        "optimizer": "adamw",  
+        "optimizer": "adam",  
         "scheduler": {
             "type":"reduce_on_plateau",
             "patience":20
@@ -41,6 +37,7 @@
     "num_workers": 4,
     "log_dir": "logs",
     "checkpoint_dir": "checkpoints",
+    "cache_dir": "cache",
     "save_every": 1,
     "keep_last_k": 3,
 

@@ -382,8 +382,13 @@ class Experiment:
             try:
                 # common pattern: batch.x, batch.edge_index, batch.batch
                 if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch'):
+                    batch.x = batch.x.float()
                     batch.y = batch.y.float()
-                    return (batch.x, batch.edge_index, batch.batch), batch.y
+                    if hasattr(batch, 'edge_attr'):
+                        batch.edge_attr = batch.edge_attr.float()
+                        return (batch.x, batch.edge_index, batch.batch, batch.edge_attr), batch.y
+                    else:
+                        return (batch.x, batch.edge_index, batch.batch), batch.y
             except Exception:
                 pass
             raise ValueError("Unknown batch format. Override _unpack_batch to handle your dataloader output.")
