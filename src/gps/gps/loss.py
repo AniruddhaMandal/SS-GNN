@@ -15,3 +15,8 @@ def build_bcelogit():
 def build_crs_entpy():
     from torch.nn import CrossEntropyLoss
     return CrossEntropyLoss()
+
+@register_loss("L1Loss")
+def build_l1loss():
+    from torch.nn import L1Loss 
+    return L1Loss()

@@ -19,6 +19,12 @@ def build_acc():
     metric_fn = accuracy_score
     return _metric_decoretor(metric_fn, 'ACC')
 
+@register_metric('MAE')
+def build_mae():
+    from sklearn.metrics import mean_absolute_error
+    metric_fn = mean_absolute_error
+    return _metric_decoretor(metric_fn, 'MAE')
+
 def _metric_decoretor(func,name):
     def wrapper(*args, **kwargs):
         score = func(*args, **kwargs)

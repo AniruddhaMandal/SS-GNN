@@ -116,7 +116,11 @@ class Experiment:
         self.test_loader = None
 
         # bookkeeping
-        self.best_metric = -float('inf')
+        self.down_metrics = ['MAE']
+        if self.cfg.metric in self.down_metrics:
+            self.best_metric = float('inf')
+        else:
+            self.best_metric = -float('inf')
         self.history = {"train_loss": [], "val_loss": []}
 
         # Build components
@@ -213,8 +217,6 @@ class Experiment:
     def _initial_fault_check(self):
         _batch = next(iter(self.train_loader))
         _feat_dim = _batch.x.size(-1)
-        if hasattr(self.cfg.model_config, 'feature_dim'):
-            _model_in_dim = self.cfg.model_config.feature_dim
         if hasattr(self.cfg.model_config, 'node_feature_dim'):
             _model_in_dim = self.cfg.model_config.node_feature_dim
         if(_model_in_dim != _feat_dim):
@@ -285,6 +287,8 @@ class Experiment:
                     loss = self.criterion(logits, labels.long())
                 if self.cfg.task == "Multi-Lable-Binary-Classification":
                     loss = self.criterion(logits, labels.float())
+                if self.cfg.task == "Multi-Target-Regression":
+                    loss = self.criterion(logits, labels.float())
 
             # backward
             if self.cfg.use_amp:
@@ -315,6 +319,7 @@ class Experiment:
         self.model.eval()
         running_loss = 0.0
         n_examples = 0
+        all_logits = []
         all_probs = []
         all_targets = []
         all_preds = []
@@ -342,10 +347,14 @@ class Experiment:
                         loss = self.criterion(logits, labels.long())
                     if self.cfg.task == "Multi-Lable-Binary-Classification":
                         loss = self.criterion(logits, labels.float())
+                    if self.cfg.task == "Multi-Target-Regression":
+                        loss = self.criterion(logits, labels.float())
 
                 # collect probabilities (scores), preds and targets
+                all_logits.append(logits.detach().cpu())
                 all_probs.append(probs.detach().cpu())
                 all_preds.append(preds.detach().cpu())
+                
                 all_targets.append(labels.detach().cpu())
 
                 batch_size = self._get_batch_size(batch)
@@ -353,6 +362,7 @@ class Experiment:
                 n_examples += batch_size
 
         avg_loss = running_loss / max(1, n_examples)
+        all_logits = torch.cat(all_logits, dim=0)
         all_probs = torch.cat(all_probs, dim=0)
         all_preds = torch.cat(all_preds,dim=0)
         all_targets = torch.cat(all_targets, dim=0)
@@ -367,6 +377,8 @@ class Experiment:
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
                 if self.cfg.task == "Binary-Classification":
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds.numpy())
+                if self.cfg.task == "Multi-Target-Regression":
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_logits.numpy())
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
         print("Metrics: ",metrics)
@@ -472,7 +484,9 @@ class Experiment:
         path = os.path.join(self.cfg.checkpoint_dir, fname)
         _fname_best_model = f"best_model.pth"
         _path_best_model = os.path.join(self.cfg.checkpoint_dir, _fname_best_model)
-        if(self.best_metric<metric):
+        if (self.cfg.metric in self.down_metrics) and (self.best_metric>metric):
+            _best_metric = metric
+        elif (self.cfg.metric not in self.down_metrics) and (self.best_metric<metric):
             _best_metric = metric
         else:
             _best_metric = self.best_metric
@@ -487,10 +501,16 @@ class Experiment:
             state['scaler'] = self.scaler.state_dict()
         torch.save(state, path)
 
-        if(self.best_metric<metric):
+        if (self.cfg.metric in self.down_metrics) and (self.best_metric>metric):
             self.best_metric = metric
             print("Best Model Retrieved!")
             torch.save(state,_path_best_model)
+        elif (self.cfg.metric not in self.down_metrics) and (self.best_metric<metric):
+            self.best_metric = metric
+            print("Best Model Retrieved!")
+            torch.save(state,_path_best_model)
+        else:
+            pass
 
         self.logger.info("Saved checkpoint: %s", path)
 
