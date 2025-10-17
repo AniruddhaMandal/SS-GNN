@@ -376,7 +376,7 @@ class Experiment:
                 if self.cfg.task == "Multi-Lable-Binary-Classification":
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
                 if self.cfg.task == "Binary-Classification":
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds.numpy())
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds[:,1].numpy())
                 if self.cfg.task == "Multi-Target-Regression":
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_logits.numpy())
             except Exception as e:
