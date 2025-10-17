@@ -30,7 +30,12 @@ def build_tudata(cfg: ExperimentConfig):
                         transform=transforms)
     
     if not hasattr(dataset[0],'x'):
-        pre_transform = OneHotDegree(max_degree=20, cat=False)  # precompute one-hot degree
+        assert hasattr(cfg.model_config, 'node_feature_type') # for data with no feature type requires `node_feature_type`
+        assert hasattr(cfg.model_config, 'max_degree') # and `max_degree`
+        if cfg.model_config.node_feature_type == "one_hot_degree":
+            pre_transform = OneHotDegree(max_degree=cfg.model_config.max_degree, cat=False)  # precompute one-hot degree
+        else:
+            raise ValueError(f"Unknown `node_feature_type`({cfg.model_config.node_feature_type})")
         dataset = TUDataset(root="data/TUDataset", 
                             name=cfg.dataset_name, 
                             transform=transforms, 
