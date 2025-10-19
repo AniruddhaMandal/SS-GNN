@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import (
-    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool
+    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_add_pool
 )
 from torch_geometric.nn.norm import BatchNorm
 
@@ -35,14 +35,18 @@ class VanillaGNNClassifier(nn.Module):
                  num_layers: int = 5,
                  mlp_layers: int = 2,
                  dropout: float = 0.1,
-                 conv_type: str = 'gine'):
+                 conv_type: str = 'gine',
+                 pooling: str = 'mean'):
+                 
         super().__init__()
         conv_type = conv_type.lower()
         assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
+        assert pooling in {'mean', 'add'}
         self.conv_type = conv_type
         self.num_layers = num_layers
         self.dropout = dropout
         self.num_classes = num_classes
+        self.pooling = pooling
 
         # Project inputs to hidden_dim once so all layers are width-matched.
         self.node_proj = nn.Linear(in_channels, hidden_dim)
@@ -107,7 +111,10 @@ class VanillaGNNClassifier(nn.Module):
             h = F.relu(h)
             h = h + h_res                           # residual (dims match)
 
-        g = global_mean_pool(h, batch)
+        if self.pooling == 'mean':
+            g = global_mean_pool(h, batch)
+        if self.pooling == 'add':
+            g = global_add_pool(h, batch)
         logits = self.classifier(g)                 # [B, num_classes]
 
         # Multi-label outputs (Peptides-func)

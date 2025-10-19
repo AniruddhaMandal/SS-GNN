@@ -29,5 +29,6 @@ def VANILLA(cfg: ExperimentConfig):
                             num_classes=cfg.model_config.out_dim,
                             num_layers=cfg.model_config.mpnn_layers,
                             dropout=cfg.model_config.dropout,
-                            conv_type=cfg.model_config.mpnn_type)
+                            conv_type=cfg.model_config.mpnn_type,
+                            pooling=cfg.model_config.pooling)
     return model

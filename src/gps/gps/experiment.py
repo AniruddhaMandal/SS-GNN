@@ -144,6 +144,8 @@ class Experiment:
             torch.cuda.manual_seed_all(seed)
         random.seed(seed)
         np.random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     # ---------- Build components (override or supply fns) ----------
     def build(self):
@@ -256,7 +258,7 @@ class Experiment:
         self.load_checkpoint(path_best_model)
         test_best_stats = self.evaluate(split='test')
         train_best_stats = self.evaluate(split='train')
-        self.logger.info("Best model metric \n\tTest data: %s. \n\tTrain data: %s. \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
+        self.logger.info("Best model metric \n\tTest data: %s \n\tTrain data: %s \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
         self.save_result(test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
 
     def train_one_epoch(self, epoch: int) -> Dict[str, float]:
@@ -289,6 +291,8 @@ class Experiment:
                     loss = self.criterion(logits, labels.float())
                 if self.cfg.task == "Multi-Target-Regression":
                     loss = self.criterion(logits, labels.float())
+                if self.cfg.task == "Multi-Class-Classification":
+                    loss = self.criterion(logits, labels.long())
 
             # backward
             if self.cfg.use_amp:
@@ -349,6 +353,8 @@ class Experiment:
                         loss = self.criterion(logits, labels.float())
                     if self.cfg.task == "Multi-Target-Regression":
                         loss = self.criterion(logits, labels.float())
+                    if self.cfg.task == "Multi-Class-Classification":
+                        loss = self.criterion(logits, labels.long())
 
                 # collect probabilities (scores), preds and targets
                 all_logits.append(logits.detach().cpu())
@@ -379,6 +385,9 @@ class Experiment:
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds[:,1].numpy())
                 if self.cfg.task == "Multi-Target-Regression":
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_logits.numpy())
+                if self.cfg.task == "Multi-Class-Classification":
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds.argmax(dim=-1).numpy())
+                
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
         print("Metrics: ",metrics)
@@ -406,14 +415,13 @@ class Experiment:
                 if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch'):
                     batch.x = batch.x.float()
                     batch.y = batch.y.float()
-                    if hasattr(batch, 'edge_attr'):
+                    if getattr(batch, 'edge_attr', None) is not None:
                         batch.edge_attr = batch.edge_attr.float()
                         return (batch.x, batch.edge_index, batch.batch, batch.edge_attr), batch.y
                     else:
                         return (batch.x, batch.edge_index, batch.batch), batch.y
-            except Exception:
-                pass
-            raise ValueError("Unknown batch format. Override _unpack_batch to handle your dataloader output.")
+            except Exception as e:
+                raise ValueError(f"{e}. Unknown batch format. Override _unpack_batch to handle your dataloader output.{batch}")
         
         if subgraph_sampling:
             if not hasattr(batch, 'x') and hasattr(batch,'edge_index') and hasattr(batch,'ptr') and hasattr(batch, 'y'):

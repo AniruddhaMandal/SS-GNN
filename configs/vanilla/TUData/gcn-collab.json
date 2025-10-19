@@ -7,21 +7,22 @@
   "model_config": {
     "name": "vanilla",
     "mpnn_type": "gcn",
-    "node_feature_type": "node_hot_degree",
-    "max_degree": 128,
-    "node_feature_dim": 129,
+    "node_feature_type": "one_hot_degree",
+    "max_degree": 399,
+    "node_feature_dim": 400,
     "hidden_dim": 256,                          
-    "mpnn_layers": 4,                           
-    "dropout": 0.2,                             
-    "out_dim": 3                                
+    "mpnn_layers": 5,                           
+    "dropout": 0.5,                             
+    "out_dim": 3,
+    "pooling": "mean"                              
   },
 
   "train": {
-    "epochs": 100,                              
-    "train_batch_size": 32,                     
-    "val_batch_size": 32,
-    "lr": 1e-3,
-    "weight_decay": 5e-5,                       
+    "epochs": 50,                              
+    "train_batch_size": 128,                     
+    "val_batch_size": 64,
+    "lr": 5e-3,
+    "weight_decay": 5e-4,                       
     "optimizer": "adam",
     "scheduler": {
       "type": "reduce_on_plateau",
@@ -33,7 +34,7 @@
 
   "device": "cuda",
   "seed": 42,
-  "num_workers": 4,
+  "num_workers": 0,
   "log_dir": "logs",
   "checkpoint_dir": "checkpoints",
   "cache_dir": "cache",

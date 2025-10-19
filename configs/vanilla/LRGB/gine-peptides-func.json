@@ -13,7 +13,8 @@
         "hidden_dim": 300,
         "mpnn_layers": 5,
         "dropout": 0.1,
-        "out_dim": 10
+        "out_dim": 10,
+        "pooling": "mean"
     },
 
     "train": 

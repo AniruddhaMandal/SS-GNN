@@ -15,6 +15,7 @@
         "transformer_layers": 2,
         "transformer_dim": 256,
         "out_dim": 10,
+        "pooling": "mean",
         "subgraph_sampling": true,
         "subgraph_param": {
             "k": 5,
