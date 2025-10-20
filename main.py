@@ -12,6 +12,5 @@ if __name__ == "__main__":
     cfg = load_config(args.config)
 
     exp_config = set_config(cfg)
-    print(exp_config.model_fn)
     experiment = Experiment(exp_config)
     experiment.train()

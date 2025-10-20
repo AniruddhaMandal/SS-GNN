@@ -6,3 +6,4 @@
 - [] Add pytest for reproducibility
 - [] SS-GNN 
 - [] Load from checkpoint
+- [] Add instruction to README file

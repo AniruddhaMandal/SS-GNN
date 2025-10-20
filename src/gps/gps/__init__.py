@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -21,7 +22,7 @@ class ExperimentConfig:
     task: Optional[str] = None
     dataset_name: Optional[str] = None
     model_name: Optional[str] = None
-    model_config: Optional[dict] = None 
+    model_config: Optional[SimpleNamespace] = None 
 
     # Metric and Criterion names
     metric: Optional[str] = None

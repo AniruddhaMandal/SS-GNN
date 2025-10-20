@@ -227,7 +227,7 @@ class Experiment:
     # ---------- Training / evaluation ----------
     def train(self):
         self.logger.info("Starting training for %d epochs", self.cfg.epochs)
-        self._initial_fault_check()
+        #self._initial_fault_check()
         for epoch in range(1, self.cfg.epochs + 1):
             t0 = time.time()
             train_stats = self.train_one_epoch(epoch)

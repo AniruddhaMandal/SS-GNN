@@ -24,7 +24,7 @@ def build_lrgb(cfg: ExperimentConfig):
 def build_tudata(cfg: ExperimentConfig):
     from torch_geometric.datasets import TUDataset
     from torch_geometric.transforms import ToUndirected, Compose
-    from .utils.data_transform import ClipOneHotDegree
+    from .utils.data_transform import ClipOneHotDegree, ClipDegreeEmbed
     transforms = Compose([
         ToUndirected()
     ])
@@ -40,6 +40,13 @@ def build_tudata(cfg: ExperimentConfig):
             transforms = Compose([
                 ToUndirected(),
                 ClipOneHotDegree(max_degree=cfg.model_config.max_degree, cat=False)
+            ])
+        if cfg.model_config.node_feature_type == "degree_embed":
+            transforms = Compose([
+                ToUndirected(),
+                ClipDegreeEmbed(max_degree=cfg.model_config.max_degree, 
+                                embed_dim=cfg.model_config.node_feature_dim, 
+                                cat=False)
             ])
         else:
             raise ValueError(f"Unknown `node_feature_type`({cfg.model_config.node_feature_type})")
