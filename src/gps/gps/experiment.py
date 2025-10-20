@@ -374,8 +374,7 @@ class Experiment:
                 # y_score shape: same as y_true for multilabel
                 if self.cfg.task == "Multi-Lable-Binary-Classification":
                     all_probs = torch.sigmoid(all_logits)
-                    all_preds = (all_probs > 0.5).long()      # [B, num_labels]
-                    metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
                 if self.cfg.task == "Binary-Classification":
                     all_preds = torch.argmax(all_logits, dim=1)   # [B]
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
