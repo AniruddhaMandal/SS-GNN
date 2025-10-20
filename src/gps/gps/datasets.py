@@ -41,7 +41,7 @@ def build_tudata(cfg: ExperimentConfig):
                 ToUndirected(),
                 ClipOneHotDegree(max_degree=cfg.model_config.max_degree, cat=False)
             ])
-        if cfg.model_config.node_feature_type == "degree_embed":
+        elif cfg.model_config.node_feature_type == "degree_embed":
             transforms = Compose([
                 ToUndirected(),
                 ClipDegreeEmbed(max_degree=cfg.model_config.max_degree, 

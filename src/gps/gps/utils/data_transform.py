@@ -32,6 +32,7 @@ class ClipDegreeEmbed:
 
         # Create the learnable embedding table
         self.embedding = torch.nn.Embedding(max_degree + 1, embed_dim)
+        self.embedding.weight.requires_grad_(False)
 
     def __call__(self, data):
         # Compute node degree
