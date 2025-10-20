@@ -117,9 +117,4 @@ class VanillaGNNClassifier(nn.Module):
             g = global_add_pool(h, batch)
         logits = self.classifier(g)                 # [B, num_classes]
 
-        # Multi-label outputs (Peptides-func)
-        probs = torch.sigmoid(logits)
-        preds = (probs > 0.5).float()
-        one_hot = preds
-
-        return logits, probs, preds, one_hot
+        return logits

@@ -283,7 +283,7 @@ class Experiment:
 
             self.optimizer.zero_grad()
             with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
-                logits, probs, preds, one_hot = self.model(*inputs) 
+                logits = self.model(*inputs) 
                 #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
                     loss = self.criterion(logits, labels.long())
@@ -324,9 +324,7 @@ class Experiment:
         running_loss = 0.0
         n_examples = 0
         all_logits = []
-        all_probs = []
         all_targets = []
-        all_preds = []
         loaders = {
             "test": self.test_loader,
             "train": self.train_loader,
@@ -345,7 +343,7 @@ class Experiment:
                 inputs = self._to_device(inputs)
                 labels = labels.to(self.device)
                 with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
-                    logits, probs, preds, one_hot = self.model(*inputs) 
+                    logits = self.model(*inputs) 
                     #user-provided criterion must accept (outputs, labels)
                     if self.cfg.task == "Binary-Classification":
                         loss = self.criterion(logits, labels.long())
@@ -356,11 +354,8 @@ class Experiment:
                     if self.cfg.task == "Multi-Class-Classification":
                         loss = self.criterion(logits, labels.long())
 
-                # collect probabilities (scores), preds and targets
+                # collect logits and targets
                 all_logits.append(logits.detach().cpu())
-                all_probs.append(probs.detach().cpu())
-                all_preds.append(preds.detach().cpu())
-                
                 all_targets.append(labels.detach().cpu())
 
                 batch_size = self._get_batch_size(batch)
@@ -369,8 +364,6 @@ class Experiment:
 
         avg_loss = running_loss / max(1, n_examples)
         all_logits = torch.cat(all_logits, dim=0)
-        all_probs = torch.cat(all_probs, dim=0)
-        all_preds = torch.cat(all_preds,dim=0)
         all_targets = torch.cat(all_targets, dim=0)
 
         metrics = {}
@@ -380,13 +373,18 @@ class Experiment:
                 # y_true shape: (N,) for binary or (N, n_classes) for multilabel
                 # y_score shape: same as y_true for multilabel
                 if self.cfg.task == "Multi-Lable-Binary-Classification":
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
+                    all_probs = torch.sigmoid(all_logits)
+                    all_preds = (all_probs > 0.5).long()      # [B, num_labels]
+                    metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 if self.cfg.task == "Binary-Classification":
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds[:,1].numpy())
+                    all_preds = torch.argmax(all_logits, dim=1)   # [B]
+                    metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 if self.cfg.task == "Multi-Target-Regression":
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_logits.numpy())
+                    metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.numpy())
                 if self.cfg.task == "Multi-Class-Classification":
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_preds.argmax(dim=-1).numpy())
+                    all_probs  = all_logits.softmax(dim=-1)
+                    all_preds  = all_probs.argmax(dim=-1)
+                    metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)

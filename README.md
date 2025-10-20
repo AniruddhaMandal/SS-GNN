@@ -5,3 +5,4 @@
     virtualenv -p python3.12 py venv
     pip install numpy torch torch_geometric scikit-learn tensorboard
 ```
+Registered model must return only the logits. 
