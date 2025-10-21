@@ -21,4 +21,4 @@ if __name__ == "__main__":
         stats.append(experiment.train())
     stats = np.array(stats)
     print(stats)
-    print(stats.mean(), stats.std())
+    print(f"Final result:{stats.mean():0.5f}+/-{stats.std():0.5f}")
