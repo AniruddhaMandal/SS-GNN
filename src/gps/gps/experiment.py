@@ -260,6 +260,7 @@ class Experiment:
         train_best_stats = self.evaluate(split='train')
         self.logger.info("Best model metric \n\tTest data: %s \n\tTrain data: %s \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
         self.save_result(test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
+        return test_best_stats.get('metric', None)
 
     def train_one_epoch(self, epoch: int) -> Dict[str, float]:
         """Default training loop. Override for custom tasks.

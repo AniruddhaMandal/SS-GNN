@@ -9,3 +9,4 @@
 - [] Add instruction to README file
 - [] add default config file where every 
      option for all arguments are present
+- [] Add support for multiple metric
