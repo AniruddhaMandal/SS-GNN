@@ -9,13 +9,6 @@ def pytest_addoption(parser):
     )
 
 @pytest.fixture(scope="session")
-def config_path(request):
-    path = request.config.getoption("--config")
-    if not path:
-        pytest.exit("You must pass --config / load plugin before using config_path")
-    return path
-
-@pytest.fixture(scope="session")
 def exp(request):
     """Boot the same Experiment as training, using the provided --config."""
     config_path = request.config.getoption("--config")
@@ -29,21 +22,8 @@ def exp(request):
     exp_cfg = set_config(cfg)
     experiment = Experiment(exp_cfg)
 
-    # If your loaders are built lazily, uncomment:
-    # if not hasattr(experiment, "train_loader"):
-    #     experiment.setup_data()
-
     for name in ("train_loader", "val_loader", "test_loader"):
         if not hasattr(experiment, name):
             pytest.fail(f"Experiment missing {name}. Make sure Experiment exposes loaders.")
 
     return experiment
-
-@pytest.fixture(scope="session")
-def data_loaders(exp):
-    """Return the same train/val/test loaders used by the experiment."""
-    return {
-        "train": exp.train_loader,
-        "val":   exp.val_loader,
-        "test":  exp.test_loader,
-    }

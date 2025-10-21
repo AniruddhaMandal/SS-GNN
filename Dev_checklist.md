@@ -3,7 +3,10 @@
     - [x] Model Parameter 
 - [x] LRGB Baseline
 - [x] Add GNN-type in VANILLA
-- [] Add pytest for reproducibility
+- [] Add pytest 
+    - [x] Reproducibility
+    - [] Data sanity
+    - [] Model sanity
 - [] SS-GNN 
 - [] Load from checkpoint
 - [] Add instruction to README file
