@@ -13,7 +13,7 @@ if __name__ == "__main__":
     cfg = load_config(args.config)
 
     exp_config = set_config(cfg)
-    seeds = [42, 10, 32, 29, 75, 53]
+    seeds = [42, 10, 32, 29, 75]
     stats = []
     for seed in seeds:
         exp_config.seed = seed
