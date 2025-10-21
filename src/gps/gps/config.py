@@ -50,6 +50,7 @@ def set_config(cfg):
     exp_config.loss_fn = cfg.train.loss_fn
 
     # Training hyperparameters
+    exp_config.train = cfg.train
     exp_config.epochs = cfg.train.epochs
     exp_config.train_batch_size = cfg.train.train_batch_size
     exp_config.val_batch_size = cfg.train.val_batch_size
