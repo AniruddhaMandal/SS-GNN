@@ -3,6 +3,12 @@
     sudo apt install python3.12 python3.12-dev
     sudo apt install build-essentials
     virtualenv -p python3.12 py venv
-    pip install numpy torch torch_geometric scikit-learn tensorboard
+    source venv/bin/activate
+    pip install pytest numpy torch torch_geometric scikit-learn tensorboard
 ```
 Registered model must return only the logits. 
+
+Run pytest with 
+```bash
+    pytest -q --config path/to/config-file.json
+```

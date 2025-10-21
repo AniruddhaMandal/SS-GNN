@@ -382,8 +382,7 @@ class Experiment:
                 if self.cfg.task == "Multi-Target-Regression":
                     metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.numpy())
                 if self.cfg.task == "Multi-Class-Classification":
-                    all_probs  = all_logits.softmax(dim=-1)
-                    all_preds  = all_probs.argmax(dim=-1)
+                    all_preds  = all_logits.argmax(dim=-1)
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 
             except Exception as e:
