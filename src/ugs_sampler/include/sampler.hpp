@@ -62,6 +62,7 @@ struct Preproc {
     i64 m = 0;
     std::vector<i64> indptr;   // length n+1
     std::vector<i32> indices;  // neighbors (undirected stored as both directions)
+    std::vector<i32> edge_col_of_csr_pos;  // size == indices.size()
     std::vector<int> order;    // ≺ order (vertex ids)
     std::vector<int> index_of; // inverse mapping: index_of[vertex] -> position in order
     std::vector<i32> suffix_deg; // degree inside suffix (indexed by position in order)
@@ -84,10 +85,10 @@ struct ThreadRNG {
 };
 
 // Declaration for batch_extension
-py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr, int m_per_graph, int k); 
+py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr, int m_per_graph, int k,  const std::string &mode); 
 
 // Declaretion for sampler 
-py::tuple sample(i64 handle, int m_per_graph, int k, std::string edge_mode);
+py::tuple sample(i64 handle, int m_per_graph, int k, std::string edge_mode, int64_t base_offset);
 
 // Declaretion for preproc functions  
 int64_t create_preproc(const torch::Tensor &edge_index, i64 num_nodes, int k);
