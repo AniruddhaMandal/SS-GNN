@@ -24,7 +24,7 @@ slice_and_renumber_edge_index_with_map(const torch::Tensor& edge_index, i64 node
         if (u >= node_lo && u < node_hi && v >= node_lo && v < node_hi) {
             out_u.push_back(u - node_lo);
             out_v.push_back(v - node_lo);
-            out_src.push_back(j);                // global column index
+            out_src.push_back(j);                // global column index in batch.edge_index
         }
     }
 
@@ -117,18 +117,19 @@ py::tuple sample_batch(
         torch::Tensor nodes_t_local       = tup[0].cast<torch::Tensor>();
         torch::Tensor edge_index_t_local  = tup[1].cast<torch::Tensor>();
         torch::Tensor edge_ptr_t_local    = tup[2].cast<torch::Tensor>();
-        torch::Tensor edge_src_idx_local  = tup.size() >= 4 ? tup[3].cast<torch::Tensor>()
-                                                            : torch::empty({edge_index_t_local.size(1)}, opts); // fallback sized; filled below if needed
+        torch::Tensor edge_src_idx_local  = tup[3].cast<torch::Tensor>();
 
         auto nodes_acc_local = nodes_t_local.accessor<i64,2>();
         auto epp = edge_ptr_t_local.accessor<i64,1>();
 
-        // write nodes (global ids if mode != 'global')
+        // write nodes (already in correct coordinate system from sample())
         for (i64 b = 0; b < nodes_t_local.size(0); ++b) {
             const i64 out_idx = Bpos + b;
             for (i64 j = 0; j < k; ++j) {
                 const i64 v = nodes_acc_local[b][j];
-                nodes_acc_out[out_idx][j] = (v >= 0) ? (v + (mode=="global" ? 0 : lo)) : -1;
+                // For 'global' mode, sample() already globalized nodes, so copy as-is
+                // For 'sample' and 'graph' modes, we need to add lo offset
+                nodes_acc_out[out_idx][j] = (v >= 0) ? (mode == "global" ? v : v + lo) : -1;
             }
         }
 
@@ -138,15 +139,33 @@ py::tuple sample_batch(
             edge_ptr.push_back(edge_ptr.back() + cnt);
         }
 
-        // map local-picked edge columns -> global columns
+        // Map edge_src_idx_local (per-graph edge columns) to global batch edge columns
         torch::Tensor edge_src_global_local;
-        if (edge_src_idx_local.defined() && edge_src_idx_local.numel() > 0) {
-            // index into the per-graph map
+        const i64 E_sampled = edge_index_t_local.size(1);
+        
+        if (edge_src_idx_local.defined() && edge_src_idx_local.numel() == E_sampled) {
+            // edge_src_idx_local contains indices into g_ei (the per-graph edge_index)
+            // g_edge2global maps g_ei columns -> batch.edge_index columns
+            
+            // Validate indices are in range
+            auto src_acc = edge_src_idx_local.accessor<i64,1>();
+            for (i64 i = 0; i < E_sampled; ++i) {
+                if (src_acc[i] < 0 || src_acc[i] >= g_edge2global.size(0)) {
+                    throw std::runtime_error(
+                        "edge_src_idx_local[" + std::to_string(i) + "]=" + 
+                        std::to_string(src_acc[i]) + " out of range [0," + 
+                        std::to_string(g_edge2global.size(0)) + ")"
+                    );
+                }
+            }
+            
             edge_src_global_local = g_edge2global.index({edge_src_idx_local});
         } else {
-            // worst-case fallback: assume sampler emitted edges in the same order as g_ei
-            // (replace this with a strict check or upgrade sampler to return edge_src_idx_local)
-            edge_src_global_local = g_edge2global.clone();
+            throw std::runtime_error(
+                "edge_src_idx_local size mismatch: expected " + 
+                std::to_string(E_sampled) + ", got " + 
+                std::to_string(edge_src_idx_local.numel())
+            );
         }
 
         total_edges += edge_index_t_local.size(1);

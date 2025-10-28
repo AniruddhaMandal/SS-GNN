@@ -421,27 +421,39 @@ class Experiment:
                 raise ValueError(f"{e}. Unknown batch format. Override _unpack_batch to handle your dataloader output.{batch}")
         
         if subgraph_sampling:
-            if not hasattr(batch, 'x') and hasattr(batch,'edge_index') and hasattr(batch,'ptr') and hasattr(batch, 'y'):
+            if not hasattr(batch, 'x') and hasattr(batch,'edge_index') and hasattr(batch,'batch') and hasattr(batch,'ptr') and hasattr(batch, 'y'):
                 raise ValueError("Unknown batch format")
-            if not hasattr(self.cfg.model_config, 'subgraph_param'):
+            if not getattr(self.cfg.model_config, 'subgraph_param', None):
                 raise ValueError("Subgraph parameters required in config.")
             k = self.cfg.model_config.subgraph_param.k
             m = self.cfg.model_config.subgraph_param.m
+
+            #ensure data types
+            batch.x = batch.x.float()
+            batch.y = batch.y.float()
+            if getattr(batch, 'edge_attr', None) is not None:
+                batch.edge_attr = batch.edge_attr.float()
+            # ensure device cpu before sampling
+            batch.edge_index = batch.edge_index.cpu()
+            batch.ptr = batch.ptr.cpu()
+
             # torch_geometric.data.Batch
             try:
-                if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch') and hasattr(batch, 'ptr'):
-                    x = batch.x.float()
-                    nodes_t, edge_index_t, edge_ptr_t, graph_id_t = \
-                        ugs_sampler.sample_batch(batch.edge_index.cpu(), batch.ptr.cpu(), m, k)
-                    batch.y = batch.y.float()
-                    return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t, k), batch.y
+                nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_global_t = \
+                    ugs_sampler.sample_batch(batch.edge_index, batch.ptr, m, k, mode="sample")
+                return(batch.x,batch.edge_attr,nodes_t,edge_index_t,edge_ptr_t, \
+                       sample_ptr_t, edge_src_global_t), batch.y
             except Exception as e:
                 # fallback: produce placeholders for all graphs in this batch (safe)
                 G = int(batch.ptr.size(0) - 1)
-                nodes_t, edge_index_t, edge_ptr_t, graph_id_t = self.make_placeholders(G, m, k, self.cfg.device)
+                nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_global_t = \
+                    self._make_placeholders(G, m, k)
                 # log warn
                 print(f"[warn] sampler failed; using placeholders for batch: {e}")
-                return(batch.x.float(),nodes_t,edge_index_t,edge_ptr_t,graph_id_t,k), batch.y.float()
+                if getattr(batch, 'edge_attr', None) is not None:
+                    batch.edge_attr = batch.edge_attr.float()
+                return(batch.x,batch.edge_attr,nodes_t,edge_index_t,edge_ptr_t, \
+                       sample_ptr_t, edge_src_global_t), batch.y
 
 
     def _get_batch_size(self, batch):
@@ -586,11 +598,12 @@ class Experiment:
         self.best_metric = state.get('best_metric', self.best_metric)
         return state
 
-    def _make_placeholders(self, G, m_per_graph, k, device):
+    def _make_placeholders(self, G, m_per_graph, k):
         """Return placeholder sampler outputs for G graphs (all -1s / empty edges)."""
         B_total = G * m_per_graph
         nodes_t = torch.full((B_total, k), -1, dtype=torch.long)        # CPU or device
         edge_index_t = torch.empty((2, 0), dtype=torch.long)            # no edges
         edge_ptr_t = torch.zeros((B_total + 1,), dtype=torch.long)     # all zeros -> empty blocks
-        graph_id_t = torch.repeat_interleave(torch.arange(G, dtype=torch.long), torch.tensor([m_per_graph]*G))
-        return nodes_t, edge_index_t, edge_ptr_t, graph_id_t
+        sample_ptr_t = torch.zeros((G+1), dtype=torch.long)
+        edge_src_global_t = torch.empty((0), dtype=torch.long)
+        return nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_global_t

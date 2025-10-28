@@ -43,7 +43,7 @@ static void rand_grow_sample(const Preproc &P, int k, ThreadRNG &rng,
 // --- Sample API ---
 //
 // Returns:
-// 0) nodes_t          [B, k]        (graph-local ids; caller may add base_offset if needed)
+// 0) nodes_t          [B, k]        (ids per edge_mode: local for "local"/"flat", global for "global")
 // 1) edge_index_t     [2, E_emit]   (endpoints per edge_mode; may be trimmed from prealloc)
 // 2) edge_ptr_t       [B+1]         (CSR over samples)
 // 3) edge_src_idx_t   [E_emit]      (per-graph LOCAL edge column ids, aligned with edge_index_t)
@@ -128,7 +128,7 @@ py::tuple sample(i64 handle, int m_per_graph, int k,
     torch::Tensor nodes_t          = torch::full({B, k}, -1, opts);
     torch::Tensor edge_ptr_t       = torch::empty({B + 1}, opts);
     torch::Tensor edge_index_t     = torch::empty({2, total_edges}, opts);
-    torch::Tensor edge_src_idx_t   = torch::empty({total_edges}, opts);  // NEW
+    torch::Tensor edge_src_idx_t   = torch::empty({total_edges}, opts);
 
     auto nodes_ptr     = nodes_t.data_ptr<i64>();
     auto edge_ptr_ptr  = edge_ptr_t.data_ptr<i64>();
@@ -139,9 +139,15 @@ py::tuple sample(i64 handle, int m_per_graph, int k,
     i64 epos = 0;
 
     for (int b = 0; b < B; ++b) {
-        // write nodes (graph-local ids; caller can globalize if desired)
-        for (int i = 0; i < (int)samples[b].size() && i < k; ++i)
-            nodes_ptr[b * (i64)k + i] = samples[b][i];
+        // write nodes with proper globalization based on edge_mode
+        for (int i = 0; i < (int)samples[b].size() && i < k; ++i) {
+            i64 node_id = samples[b][i];
+            // For "global" mode, nodes should be globalized
+            if (edge_mode == "global") {
+                node_id += base_offset;
+            }
+            nodes_ptr[b * (i64)k + i] = node_id;
+        }
         for (int i = (int)samples[b].size(); i < k; ++i)
             nodes_ptr[b * (i64)k + i] = -1;
 
@@ -150,31 +156,43 @@ py::tuple sample(i64 handle, int m_per_graph, int k,
             const int u_local = e.u_local;
             const int v_local = e.v_local;
 
-            // read graph-local node ids we just wrote
-            const i64 u_gl = nodes_ptr[b * (i64)k + (i64)u_local];
-            const i64 v_gl = nodes_ptr[b * (i64)k + (i64)v_local];
-            if (u_gl == -1 || v_gl == -1) continue; // guard (degenerate sample)
+            // Validate that we have valid nodes
+            if (u_local >= (int)samples[b].size() || v_local >= (int)samples[b].size()) {
+                continue; // skip invalid edges
+            }
 
-            i64 u_out = 0, v_out = 0;
+            // read node ids we just wrote (already in the correct coordinate system)
+            const i64 u_node = nodes_ptr[b * (i64)k + (i64)u_local];
+            const i64 v_node = nodes_ptr[b * (i64)k + (i64)v_local];
+            if (u_node == -1 || v_node == -1) continue; // guard (degenerate sample)
+
+            // Compute edge endpoints based on edge_mode
+            i64 u_final = 0;
+            i64 v_final = 0;
+            
             if (edge_mode == "local") {
-                u_out = (i64)u_local;
-                v_out = (i64)v_local;
+                // Nodes are local within sample (0..k-1)
+                u_final = (i64)u_local;
+                v_final = (i64)v_local;
             } else if (edge_mode == "flat") {
-                u_out = (i64)b * (i64)k + (i64)u_local;
-                v_out = (i64)b * (i64)k + (i64)v_local;
+                // Flatten across batch
+                u_final = (i64)b * (i64)k + (i64)u_local;
+                v_final = (i64)b * (i64)k + (i64)v_local;
             } else if (edge_mode == "global") {
-                // graph-local -> dataset-global via base_offset
-                u_out = u_gl + base_offset;
-                v_out = v_gl + base_offset;
+                // Use the globalized node IDs directly
+                u_final = u_node;
+                v_final = v_node;
             } else {
                 throw std::runtime_error(std::string("Unknown edge_mode: ") + edge_mode);
             }
 
             // write edge
-            edge_idx_ptr[epos]                 = u_out;
-            edge_idx_ptr[total_edges + epos]   = v_out;
+            edge_idx_ptr[epos]               = u_final;
+            edge_idx_ptr[total_edges + epos] = v_final;
 
-            edge_src_ptr[epos] = (i64)P->edge_col_of_csr_pos[(size_t)e.csr_pos];  // 0..E_graph-1
+            // CRITICAL: Write the per-graph edge column index
+            // This is the index in the per-graph CSR representation
+            edge_src_ptr[epos] = (i64)P->edge_col_of_csr_pos[(size_t)e.csr_pos];
 
             ++epos;
         }
@@ -182,7 +200,7 @@ py::tuple sample(i64 handle, int m_per_graph, int k,
         edge_ptr_ptr[b + 1] = epos;
     }
 
-    // Trim if we skipped any edges
+    // Trim if we skipped any edges (this maintains alignment)
     if (epos < total_edges) {
         // edge_index trim
         torch::Tensor edge_index_trim = torch::empty({2, epos}, opts);
@@ -193,13 +211,16 @@ py::tuple sample(i64 handle, int m_per_graph, int k,
         }
         edge_index_t = edge_index_trim;
 
-        // edge_src_idx trim
+        // edge_src_idx trim - MUST stay aligned with edge_index_t
         torch::Tensor edge_src_trim = torch::empty({epos}, opts);
         std::memcpy(edge_src_trim.data_ptr<i64>(), edge_src_ptr, sizeof(i64) * (size_t)epos);
         edge_src_idx_t = edge_src_trim;
     }
 
     // Return minimal pack for downstream:
-    // nodes_t, edge_index_t, edge_ptr_t, edge_src_idx_t
+    // nodes_t [B, k]: node IDs in appropriate coordinate system
+    // edge_index_t [2, E_actual]: edge endpoints in appropriate coordinate system
+    // edge_ptr_t [B+1]: CSR pointer over samples
+    // edge_src_idx_t [E_actual]: per-graph edge column indices (0..E_graph-1)
     return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, edge_src_idx_t);
 }

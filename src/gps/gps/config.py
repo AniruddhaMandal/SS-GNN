@@ -18,59 +18,63 @@ def load_config(f_path: str):
 def set_config(cfg):
     exp_config = ExperimentConfig()
 
-    # Set Callables
-    exp_config.model_fn = get_model(cfg.model_name)
-    exp_config.dataloader_fn = get_dataset(cfg.dataset_name)
-    exp_config.criterion_fn = get_loss(cfg.train.loss_fn) 
-    exp_config.metric_fn = get_metric(cfg.train.metric)()
+    # --- Set Callables ---
+    exp_config.model_fn = get_model(getattr(cfg, "model_name", None))
+    exp_config.dataloader_fn = get_dataset(getattr(cfg, "dataset_name", None))
+    exp_config.criterion_fn = get_loss(getattr(getattr(cfg, "train", {}), "loss_fn", None))
+    exp_config.metric_fn = (
+        get_metric(getattr(getattr(cfg, "train", {}), "metric", None))()
+        if getattr(getattr(cfg, "train", {}), "metric", None) is not None
+        else None
+    )
 
-    # Experiment, Task, Model,Dataset Name 
-    exp_config.name = cfg.name
-    exp_config.task = cfg.task
-    exp_config.model_name = cfg.model_name
-    exp_config.dataset_name = cfg.dataset_name
-    exp_config.model_config = cfg.model_config
+    # --- Experiment, Task, Model, Dataset ---
+    exp_config.name = getattr(cfg, "name", None)
+    exp_config.task = getattr(cfg, "task", None)
+    exp_config.model_name = getattr(cfg, "model_name", None)
+    exp_config.dataset_name = getattr(cfg, "dataset_name", None)
+    exp_config.model_config = getattr(cfg, "model_config", None)
 
-    # set sampling parameters
-    if not hasattr(exp_config.model_config,'subgraph_sampling'):
-        exp_config.model_config.subgraph_sampling = False
-    if exp_config.model_config.subgraph_sampling:
-        assert hasattr(exp_config.model_config, "subgraph_param"), "subgraph sampling parameters missing!"
-    
-    #edge dimension 
-    if not hasattr(exp_config.model_config, 'edge_feature_dim'):
-        exp_config.model_config.edge_feature_dim = None
-    
-    # mpnn type
-    if not hasattr(exp_config.model_config, 'mpnn_type'):
-        exp_config.model_config.mpnn_type = 'gcn'
+    # --- Sampling parameters ---
+    if exp_config.model_config is not None:
+        if not hasattr(exp_config.model_config, "subgraph_sampling"):
+            exp_config.model_config.subgraph_sampling = False
 
-    # Metric and Criterion names
-    exp_config.metric = cfg.train.metric
-    exp_config.loss_fn = cfg.train.loss_fn
+        if exp_config.model_config.subgraph_sampling:
+            assert hasattr(exp_config.model_config, "subgraph_param"), "subgraph sampling parameters missing!"
 
-    # Training hyperparameters
-    exp_config.train = cfg.train
-    exp_config.epochs = cfg.train.epochs
-    exp_config.train_batch_size = cfg.train.train_batch_size
-    exp_config.val_batch_size = cfg.train.val_batch_size
-    exp_config.lr = cfg.train.lr
-    exp_config.weight_decay = cfg.train.weight_decay
-    exp_config.optimizer = cfg.train.optimizer # 'adam' or 'adamw' or 'sgd'
-    exp_config.scheduler = cfg.train.scheduler # example: {'type':'step','step_size':30,'gamma':0.1}
+        if not hasattr(exp_config.model_config, "edge_feature_dim"):
+            exp_config.model_config.edge_feature_dim = None
 
-    # Misc
-    exp_config.device = cfg.device
-    exp_config.seed = cfg.seed
-    exp_config.num_workers = cfg.num_workers
-    exp_config.log_dir = cfg.log_dir
-    exp_config.checkpoint_dir = cfg.checkpoint_dir
-    exp_config.cache_dir = cfg.cache_dir
-    exp_config.save_every = cfg.save_every
-    exp_config.keep_last_k = cfg.keep_last_k
+        if not hasattr(exp_config.model_config, "mpnn_type"):
+            exp_config.model_config.mpnn_type = "gcn"
 
-    # Numerical/stability
-    exp_config.use_amp = cfg.use_amp
-    exp_config.grad_clip =  cfg.grad_clip
-    
+    # --- Metric and Criterion names ---
+    exp_config.metric = getattr(getattr(cfg, "train", {}), "metric", None)
+    exp_config.loss_fn = getattr(getattr(cfg, "train", {}), "loss_fn", None)
+
+    # --- Training hyperparameters ---
+    exp_config.train = getattr(cfg, "train", None)
+    exp_config.epochs = getattr(getattr(cfg, "train", {}), "epochs", None)
+    exp_config.train_batch_size = getattr(getattr(cfg, "train", {}), "train_batch_size", None)
+    exp_config.val_batch_size = getattr(getattr(cfg, "train", {}), "val_batch_size", None)
+    exp_config.lr = getattr(getattr(cfg, "train", {}), "lr", None)
+    exp_config.weight_decay = getattr(getattr(cfg, "train", {}), "weight_decay", None)
+    exp_config.optimizer = getattr(getattr(cfg, "train", {}), "optimizer", None)
+    exp_config.scheduler = getattr(getattr(cfg, "train", {}), "scheduler", None)
+
+    # --- Misc ---
+    exp_config.device = getattr(cfg, "device", None)
+    exp_config.seed = getattr(cfg, "seed", None)
+    exp_config.num_workers = getattr(cfg, "num_workers", None)
+    exp_config.log_dir = getattr(cfg, "log_dir", None)
+    exp_config.checkpoint_dir = getattr(cfg, "checkpoint_dir", None)
+    exp_config.cache_dir = getattr(cfg, "cache_dir", None)
+    exp_config.save_every = getattr(cfg, "save_every", None)
+    exp_config.keep_last_k = getattr(cfg, "keep_last_k", None)
+
+    # --- Numerical/stability ---
+    exp_config.use_amp = getattr(cfg, "use_amp", None)
+    exp_config.grad_clip = getattr(cfg, "grad_clip", None)
+
     return exp_config
