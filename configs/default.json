@@ -19,7 +19,8 @@
         "subgraph_sampling": true,
         "subgraph_param": {
             "k": 5,
-            "m": 100
+            "m": 100,
+            "pooling": "mean"
         }
     },
 

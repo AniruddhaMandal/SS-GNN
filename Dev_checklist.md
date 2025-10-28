@@ -1,15 +1,17 @@
 - [] Reproducibility
     - [x] Datasplit
     - [x] Model Parameter 
+    - [] ss-gnn
 - [x] LRGB Baseline
 - [x] Add GNN-type in VANILLA
 - [] Add pytest 
     - [x] Reproducibility
     - [] Data sanity
     - [] Model sanity
-- [] SS-GNN 
+- [x] SS-GNN 
 - [] Load from checkpoint
-- [] Add instruction to README file
-- [] add default config file where every 
+- [x] Add instruction to README file
+    - [] Add config file doc
+- [x] add default config file where every 
      option for all arguments are present
 - [] Add support for multiple metric
