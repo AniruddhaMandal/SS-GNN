@@ -1,4 +1,5 @@
 import argparse
+import os
 import numpy as np
 from gps.experiment import Experiment
 from gps.config import load_config, set_config
@@ -25,18 +26,37 @@ if __name__ == "__main__":
 
     if args.multi_seed:
         print(f"Running experiment with multiple seeds: {args.seeds}")
-        stats = []
+        train_metrics = []
+        test_metrics = []
+        val_metrics = []
         for seed in args.seeds:
             exp_config.seed = seed
             experiment = Experiment(exp_config)
             result = experiment.train()
-            stats.append(result)
-            print(f"Seed {seed}: {result:.5f}")
-        stats = np.array(stats)
-        print(f"\nFinal result over {len(args.seeds)} seeds: {stats.mean():.5f} ± {stats.std():.5f}")
-
+            train_metrics.append(result['train_metric'])
+            test_metrics.append(result['test_metric'])
+            val_metrics.append(result['val_metric'])
+        train_metrics = np.array(train_metrics)
+        test_metrics = np.array(test_metrics)
+        val_metrics = np.array(val_metrics)
+        out_str = f"\nFinal result over {len(args.seeds)} seeds:\
+              \n\t Test: {test_metrics.mean():.5f} ± {test_metrics.std():.5f}\
+              \n\t Train: {train_metrics.mean():.5f} ± {train_metrics.std():.5f}\
+              \n\t Val: {val_metrics.mean():.5f} ± {val_metrics.std():.5f}\
+              "
     else:
         print(f"Running single experiment with seed {exp_config.seed}")
         experiment = Experiment(exp_config)
         result = experiment.train()
-        print(f"Result: {result:.5f}")
+        train_metrics = np.array(result['train_metric'])
+        test_metrics = np.array(result['test_metric'])
+        val_metrics = np.array(result['val_metric'])
+        out_str = f"Result: \
+                    \n\tTest: {test_metrics:.5f}\
+                    \n\tTrain: {train_metrics:.5f}\
+                    \n\tVal: {val_metrics:.5f}"
+        print(out_str)
+
+    os.makedirs('experiment_results',exist_ok=True)
+    with open(f"experiment_results/{exp_config.name}",'w') as f:
+        f.write(out_str)

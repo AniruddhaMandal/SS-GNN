@@ -216,18 +216,11 @@ class Experiment:
             self.logger.warning("Unknown scheduler type: %s", s.type)
         return sch
 
-    def _initial_fault_check(self):
-        _batch = next(iter(self.train_loader))
-        _feat_dim = _batch.x.size(-1)
-        if hasattr(self.cfg.model_config, 'node_feature_dim'):
-            _model_in_dim = self.cfg.model_config.node_feature_dim
-        if(_model_in_dim != _feat_dim):
-            raise ValueError(f"model input dim({_model_in_dim}) not equal to node feature dim({_feat_dim}).")
-
     # ---------- Training / evaluation ----------
     def train(self):
+        """ Returns: `dict` with keys ['train_metric', 'test_metric', 'val_metric']
+        """
         self.logger.info("Starting training for %d epochs", self.cfg.epochs)
-        #self._initial_fault_check()
         for epoch in range(1, self.cfg.epochs + 1):
             t0 = time.time()
             train_stats = self.train_one_epoch(epoch)
@@ -258,9 +251,17 @@ class Experiment:
         self.load_checkpoint(path_best_model)
         test_best_stats = self.evaluate(split='test')
         train_best_stats = self.evaluate(split='train')
-        self.logger.info("Best model metric \n\tTest data: %s \n\tTrain data: %s \n\tVal data: %s", test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
-        self.save_result(test_best_stats.get('metric', None), train_best_stats.get('metric', None),self.best_metric)
-        return test_best_stats.get('metric', None)
+
+        test_metric = test_best_stats.get('metric', None)
+        train_metric = train_best_stats.get('metric', None)
+        val_metric = self.best_metric
+
+        result_out = {
+            "train_metric" : train_metric,
+            "test_metric" : test_metric,
+            "val_metric" : val_metric
+        }
+        return result_out
 
     def train_one_epoch(self, epoch: int) -> Dict[str, float]:
         """Default training loop. Override for custom tasks.
@@ -387,7 +388,6 @@ class Experiment:
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
-        print("Metrics: ",metrics)
         metric_val = metrics.get(self.cfg.metric)
 
         # tensorboard
@@ -488,13 +488,6 @@ class Experiment:
             return inputs.to(self.device)
         return inputs
     
-    def save_result(self, test, train, val):
-        result_dir = 'experiment_results'
-        os.makedirs(result_dir, exist_ok=True)
-        save_path = os.path.join(result_dir,f"{self.cfg.name}.txt")
-        with open(save_path, 'w') as f:
-            f.write(f"Best model metric \n\tTest data: {test}. \n\tTrain data: {train}. \n\tVal data: {val}")
-
     def save_checkpoint(self, epoch: int, metric: Optional[float] = None):
         # keep only last k checkpoints
         fname = f"{self.cfg.name}_epoch{epoch:03d}.pth"
@@ -528,8 +521,6 @@ class Experiment:
             torch.save(state,_path_best_model)
         else:
             pass
-
-        self.logger.info("Saved checkpoint: %s", path)
 
         # housekeeping: remove old checkpoints keeping last K
         files = sorted([f for f in os.listdir(self.cfg.checkpoint_dir) if f.startswith(self.cfg.name)])
