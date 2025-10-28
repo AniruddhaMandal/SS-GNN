@@ -39,7 +39,7 @@ if __name__ == "__main__":
         train_metrics = np.array(train_metrics)
         test_metrics = np.array(test_metrics)
         val_metrics = np.array(val_metrics)
-        out_str = f"\nFinal result over {len(args.seeds)} seeds:\
+        out_str = f"Final result over {len(args.seeds)} seeds:\
               \n\t Test: {test_metrics.mean():.5f} ± {test_metrics.std():.5f}\
               \n\t Train: {train_metrics.mean():.5f} ± {train_metrics.std():.5f}\
               \n\t Val: {val_metrics.mean():.5f} ± {val_metrics.std():.5f}\
@@ -58,5 +58,5 @@ if __name__ == "__main__":
         print(out_str)
 
     os.makedirs('experiment_results',exist_ok=True)
-    with open(f"experiment_results/{exp_config.name}",'w') as f:
+    with open(f"experiment_results/{exp_config.name}.txt",'w') as f:
         f.write(out_str)
