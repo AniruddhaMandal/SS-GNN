@@ -259,7 +259,8 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         dropout (float, optional): Dropout probability applied in the classifier. Defaults to 0.1.
         conv_type (str, optional): Type of GNN convolution to use. One of:
             {'gine', 'gin', 'gcn', 'sage', 'gatv2'}. Defaults to 'gine'.
-        pooling (str, optional): Type of graph-level pooling. Defaults to 'mean'.
+        graph_level_pooling (str, optional): Type of graph-level pooling. Defaults to 'mean'.
+        subgraph_level_pooling (str, optional): Type of subgraph-level pooling. Defaults to 'mean'.
 
     Inputs:
         x_global (Tensor): Node features of shape [N, in_channels].
