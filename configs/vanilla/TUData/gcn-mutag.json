@@ -8,7 +8,7 @@
     {
         "name": "vanilla",
         "mpnn_type": "gcn",
-        "node_feature_dim": 28,
+        "node_feature_dim": 7,
         "hidden_dim": 300,
         "mpnn_layers": 5,
         "dropout": 0.1,
