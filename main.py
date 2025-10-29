@@ -1,8 +1,37 @@
-import argparse
 import os
+import json
+import argparse
 import numpy as np
 from gps.experiment import Experiment
 from gps.config import load_config, set_config
+
+def apply_overrides(cfg: dict, overrides: list[str]) -> dict:
+    """
+    Overrides fields in cfg (dict) based on key=value pairs.
+    Supports nested keys like 'train.lr=0.01'.
+    Modifies cfg in place and also returns it.
+    """
+    for ov in overrides:
+        if '=' not in ov:
+            raise ValueError(f"Invalid override: {ov}. Must be key=value.")
+        key, value = ov.split('=', 1)
+
+        # Convert string to number/bool/null if possible
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            pass  # keep as string
+
+        # Walk down nested dict keys
+        parts = key.split('.')
+        obj = cfg
+        for p in parts[:-1]:
+            if p not in obj or not isinstance(obj[p], dict):
+                print(f"not present: {p}")
+                obj[p] = {}  # create intermediate levels if missing
+            obj = obj[p]
+        obj[parts[-1]] = value
+    return cfg
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run experiment with single or multiple seeds.")
@@ -18,10 +47,17 @@ if __name__ == "__main__":
                         type=int,
                         default=[42, 10, 32, 29, 75],
                         help='Custom list of seeds to use when --multi-seed is set.')
+    parser.add_argument('--override', '-o', nargs='*', default=[],
+                        help='Override config values, e.g. train.lr=0.01 model.hidden_dim=128')
     args = parser.parse_args()
 
     # Load and set config
     cfg = load_config(args.config)
+
+    # Apply commandline overrides
+    if args.override:
+        cfg = apply_overrides(cfg, args.override)
+
     exp_config = set_config(cfg)
 
     if args.multi_seed:
@@ -44,6 +80,7 @@ if __name__ == "__main__":
               \n\t Train: {train_metrics.mean():.5f} ± {train_metrics.std():.5f}\
               \n\t Val: {val_metrics.mean():.5f} ± {val_metrics.std():.5f}\
               "
+        print(out_str)
     else:
         print(f"Running single experiment with seed {exp_config.seed}")
         experiment = Experiment(exp_config)

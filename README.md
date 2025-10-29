@@ -70,22 +70,27 @@ pip install -e src/gps[gnn]
 Using CLI (recommended):
 
 ```bash
-gps-run -c configs/ss-gnn/TUDataset/gcn-mutag.json
+gps-run -c configs/ss_gnn/TUDataset/gcn-mutag.json
 ```
 
 Or directly via Python:
 
 ```bash
-python main.py --config configs/ss-gnn/TUDataset/gcn-mutag.json
+python main.py --config configs/ss_gnn/TUDataset/gcn-mutag.json
 ```
 
 With multiple seeds:
 
 ```bash
-gps-run -c configs/ss-gnn/TUDataset/gcn-mutag.json -m --seeds 42 10 32 29 75
+gps-run -c configs/ss_gnn/TUDataset/gcn-mutag.json -m --seeds 42 10 32 29 75
 ```
 
-📊 The framework automatically averages results and reports mean ± std across seeds and saves it in `experiment_results`
+Override config in CLI:
+```bash
+gps-run -c configs/ss_gnn/TUDataset/gcn-mutag.json -o train.epochs=50 model_config.hidden_dim=128
+```
+
+📊 The framework automatically averages results and reports mean ± std across seeds and saves it in `experiment_results/'exp_config.name'.txt`
 
 ---
 

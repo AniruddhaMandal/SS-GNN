@@ -1,80 +1,49 @@
 import os
 import json
-from types import SimpleNamespace
+from typing import Dict, Any
 from gps.experiment import ExperimentConfig
+from . import ExperimentConfig, merge_into_dataclass
 from .registry import get_model, get_dataset, get_metric, get_loss
 from . import model
 from . import datasets
 from . import loss
 from . import metric
 
-def load_config(f_path: str):
-    if not os.path.exists(f_path):
-        raise FileNotFoundError(f"`{f_path}` doesn't exists.")
-    with open(f_path) as f:
-        cfg = json.load(f, object_hook=lambda d: SimpleNamespace(**d))
-    return cfg
+def load_config(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"`{path}` doesn't exist.")
+    with open(path) as f:
+        return json.load(f)
 
-def set_config(cfg):
-    exp_config = ExperimentConfig()
+def set_config(cfg_dict: dict,
+               *,
+               strict: bool = True) -> ExperimentConfig:
+    """
+    Build a fully-populated ExperimentConfig:
+      - merge cfg_dict onto dataclass defaults
+      - resolve factory functions into callables
+      - validate (optional)
+    """
+    exp = ExperimentConfig()                 # defaults
+    merge_into_dataclass(exp, cfg_dict)      # overlay file values
 
-    # --- Set Callables ---
-    exp_config.model_fn = get_model(getattr(cfg, "model_name", None))
-    exp_config.dataloader_fn = get_dataset(getattr(cfg, "dataset_name", None))
-    exp_config.criterion_fn = get_loss(getattr(getattr(cfg, "train", {}), "loss_fn", None))
-    exp_config.metric_fn = (
-        get_metric(getattr(getattr(cfg, "train", {}), "metric", None))()
-        if getattr(getattr(cfg, "train", {}), "metric", None) is not None
-        else None
-    )
+    # --- Resolve callables based on names present in exp ---
+    exp.model_fn = get_model(exp.model_name) if exp.model_name else None
+    exp.dataloader_fn = get_dataset(exp.dataset_name) if exp.dataset_name else None
+    exp.criterion_fn = get_loss(exp.train.loss_fn) if exp.train.loss_fn else None
+    exp.metric_fn = get_metric(exp.train.metric)() if exp.train.metric else None
 
-    # --- Experiment, Task, Model, Dataset ---
-    exp_config.name = getattr(cfg, "name", None)
-    exp_config.task = getattr(cfg, "task", None)
-    exp_config.model_name = getattr(cfg, "model_name", None)
-    exp_config.dataset_name = getattr(cfg, "dataset_name", None)
-    exp_config.model_config = getattr(cfg, "model_config", None)
+    # --- Optional validation (fail fast with helpful hints) ---
+    missing = []
+    if exp.model_fn is None:
+        missing.append("model_fn (set `model_name`)")
+    if exp.dataloader_fn is None:
+        missing.append("dataloader_fn (set `dataset_name`)")
+    if exp.criterion_fn is None:
+        missing.append("criterion_fn (set `train.loss_fn`)")
 
-    # --- Sampling parameters ---
-    if exp_config.model_config is not None:
-        if not hasattr(exp_config.model_config, "subgraph_sampling"):
-            exp_config.model_config.subgraph_sampling = False
+    if strict and missing:
+        bullet = "\n  - ".join(missing)
+        raise ValueError(f"Incomplete configuration. Please provide:\n  - {bullet}")
 
-        if exp_config.model_config.subgraph_sampling:
-            assert hasattr(exp_config.model_config, "subgraph_param"), "subgraph sampling parameters missing!"
-
-        if not hasattr(exp_config.model_config, "edge_feature_dim"):
-            exp_config.model_config.edge_feature_dim = None
-
-        if not hasattr(exp_config.model_config, "mpnn_type"):
-            exp_config.model_config.mpnn_type = "gcn"
-
-    # --- Metric and Criterion names ---
-    exp_config.metric = getattr(getattr(cfg, "train", {}), "metric", None)
-    exp_config.loss_fn = getattr(getattr(cfg, "train", {}), "loss_fn", None)
-
-    # --- Training hyperparameters ---
-    exp_config.train = getattr(cfg, "train", None)
-    exp_config.epochs = getattr(getattr(cfg, "train", {}), "epochs", None)
-    exp_config.train_batch_size = getattr(getattr(cfg, "train", {}), "train_batch_size", None)
-    exp_config.val_batch_size = getattr(getattr(cfg, "train", {}), "val_batch_size", None)
-    exp_config.lr = getattr(getattr(cfg, "train", {}), "lr", None)
-    exp_config.weight_decay = getattr(getattr(cfg, "train", {}), "weight_decay", None)
-    exp_config.optimizer = getattr(getattr(cfg, "train", {}), "optimizer", None)
-    exp_config.scheduler = getattr(getattr(cfg, "train", {}), "scheduler", None)
-
-    # --- Misc ---
-    exp_config.device = getattr(cfg, "device", None)
-    exp_config.seed = getattr(cfg, "seed", None)
-    exp_config.num_workers = getattr(cfg, "num_workers", None)
-    exp_config.log_dir = getattr(cfg, "log_dir", None)
-    exp_config.checkpoint_dir = getattr(cfg, "checkpoint_dir", None)
-    exp_config.cache_dir = getattr(cfg, "cache_dir", None)
-    exp_config.save_every = getattr(cfg, "save_every", None)
-    exp_config.keep_last_k = getattr(cfg, "keep_last_k", None)
-
-    # --- Numerical/stability ---
-    exp_config.use_amp = getattr(cfg, "use_amp", None)
-    exp_config.grad_clip = getattr(cfg, "grad_clip", None)
-
-    return exp_config
+    return exp

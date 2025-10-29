@@ -117,7 +117,7 @@ class Experiment:
 
         # bookkeeping
         self.down_metrics = ['MAE']
-        if self.cfg.metric in self.down_metrics:
+        if self.cfg.train.metric in self.down_metrics:
             self.best_metric = float('inf')
         else:
             self.best_metric = -float('inf')
@@ -182,7 +182,7 @@ class Experiment:
         self.scheduler = self._build_scheduler()
 
         # AMP scaler
-        if self.cfg.use_amp:
+        if self.cfg.train.use_amp:
             self.scaler = torch.amp.GradScaler()
 
         # optionally resume
@@ -193,23 +193,23 @@ class Experiment:
 
     def _build_optimizer(self):
         params = [p for p in self.model.parameters() if p.requires_grad]
-        if self.cfg.optimizer.lower() in ('adam', 'adamw'):
-            opt_cls = optim.AdamW if self.cfg.optimizer.lower() == 'adamw' else optim.Adam
-            return opt_cls(params, lr=self.cfg.lr, weight_decay=self.cfg.weight_decay)
-        elif self.cfg.optimizer.lower() == 'sgd':
-            return optim.SGD(params, lr=self.cfg.lr, momentum=0.9, weight_decay=self.cfg.weight_decay)
+        if self.cfg.train.optimizer.lower() in ('adam', 'adamw'):
+            opt_cls = optim.AdamW if self.cfg.train.optimizer.lower() == 'adamw' else optim.Adam
+            return opt_cls(params, lr=self.cfg.train.lr, weight_decay=self.cfg.train.weight_decay)
+        elif self.cfg.train.optimizer.lower() == 'sgd':
+            return optim.SGD(params, lr=self.cfg.train.lr, momentum=0.9, weight_decay=self.cfg.train.weight_decay)
         else:
-            raise ValueError(f"Unknown optimizer: {self.cfg.optimizer}")
+            raise ValueError(f"Unknown optimizer: {self.cfg.train.optimizer}")
 
     def _build_scheduler(self):
         sch = None
-        s = self.cfg.scheduler
+        s = self.cfg.train.scheduler
         if not s:
             return None
         if s.type == 'step':
             sch = optim.lr_scheduler.StepLR(self.optimizer, step_size=s.step_size, gamma=s.gamma)
         elif s.type == 'cosine':
-            sch = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.cfg.epochs)
+            sch = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.cfg.train.epochs)
         elif s.type == 'reduce_on_plateau':
             sch = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=s.patience)
         else:
@@ -220,8 +220,8 @@ class Experiment:
     def train(self):
         """ Returns: `dict` with keys ['train_metric', 'test_metric', 'val_metric']
         """
-        self.logger.info("Starting training for %d epochs", self.cfg.epochs)
-        for epoch in range(1, self.cfg.epochs + 1):
+        self.logger.info("Starting training for %d epochs", self.cfg.train.epochs)
+        for epoch in range(1, self.cfg.train.epochs + 1):
             t0 = time.time()
             train_stats = self.train_one_epoch(epoch)
             val_stats = self.evaluate(epoch)
@@ -284,7 +284,7 @@ class Experiment:
             labels = labels.to(self.device)
 
             self.optimizer.zero_grad()
-            with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
+            with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
                 logits = self.model(*inputs) 
                 #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
@@ -297,18 +297,18 @@ class Experiment:
                     loss = self.criterion(logits, labels.long())
 
             # backward
-            if self.cfg.use_amp:
+            if self.cfg.train.use_amp:
                 assert self.scaler is not None
                 self.scaler.scale(loss).backward()
-                if self.cfg.grad_clip:
+                if self.cfg.train.grad_clip:
                     self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.train.grad_clip)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
-                if self.cfg.grad_clip:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                if self.cfg.train.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.train.grad_clip)
                 self.optimizer.step()
 
             # bookkeeping
@@ -344,7 +344,7 @@ class Experiment:
                 inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)
                 inputs = self._to_device(inputs)
                 labels = labels.to(self.device)
-                with torch.amp.autocast('cuda', enabled=self.cfg.use_amp):
+                with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
                     logits = self.model(*inputs) 
                     #user-provided criterion must accept (outputs, labels)
                     if self.cfg.task == "Binary-Classification":
@@ -388,7 +388,7 @@ class Experiment:
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
-        metric_val = metrics.get(self.cfg.metric)
+        metric_val = metrics.get(self.cfg.train.metric)
 
         # tensorboard
         if epoch is not None:
@@ -494,9 +494,9 @@ class Experiment:
         path = os.path.join(self.cfg.checkpoint_dir, fname)
         _fname_best_model = f"best_model.pth"
         _path_best_model = os.path.join(self.cfg.checkpoint_dir, _fname_best_model)
-        if (self.cfg.metric in self.down_metrics) and (self.best_metric>metric):
+        if (self.cfg.train.metric in self.down_metrics) and (self.best_metric>metric):
             _best_metric = metric
-        elif (self.cfg.metric not in self.down_metrics) and (self.best_metric<metric):
+        elif (self.cfg.train.metric not in self.down_metrics) and (self.best_metric<metric):
             _best_metric = metric
         else:
             _best_metric = self.best_metric
@@ -511,11 +511,11 @@ class Experiment:
             state['scaler'] = self.scaler.state_dict()
         torch.save(state, path)
 
-        if (self.cfg.metric in self.down_metrics) and (self.best_metric>metric):
+        if (self.cfg.train.metric in self.down_metrics) and (self.best_metric>metric):
             self.best_metric = metric
             print("Best Model Retrieved!")
             torch.save(state,_path_best_model)
-        elif (self.cfg.metric not in self.down_metrics) and (self.best_metric<metric):
+        elif (self.cfg.train.metric not in self.down_metrics) and (self.best_metric<metric):
             self.best_metric = metric
             print("Best Model Retrieved!")
             torch.save(state,_path_best_model)
