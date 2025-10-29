@@ -46,6 +46,7 @@ from torch.utils.tensorboard import SummaryWriter
 import ugs_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
+from dataclasses import asdict
 
 # ------- Experiment class -------
 
@@ -125,6 +126,9 @@ class Experiment:
 
         # Build components
         self.build()
+        
+        # Log experiment setup
+        self.log_config()
 
     # ---------- Setup helpers ----------
     def _setup_logger(self):
@@ -137,6 +141,20 @@ class Experiment:
         if not logger.handlers:
             logger.addHandler(ch)
         return logger
+
+    def log_config(self):
+        # Convert dataclass (including nested dataclasses) to dict
+        cfg_dict = asdict(self.cfg)
+
+        # Optional: filter out callables to avoid printing garbage
+        filtered_cfg = {
+            k: v for k, v in cfg_dict.items()
+            if not callable(v)
+        }
+
+        pretty = json.dumps(filtered_cfg, indent=4)
+        self.logger.info("=== Experiment Configuration ===")
+        self.logger.info(pretty)
 
     def _set_seed(self, seed: int):
         torch.manual_seed(seed)
@@ -189,7 +207,7 @@ class Experiment:
         if self.cfg.resume_from:
             self.load_checkpoint(self.cfg.resume_from)
 
-        self.logger.info("Build complete: device=%s, model=%s", self.device, type(self.model).__name__)
+        self.logger.info("Build complete")
 
     def _build_optimizer(self):
         params = [p for p in self.model.parameters() if p.requires_grad]
