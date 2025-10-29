@@ -290,7 +290,7 @@ class Experiment:
         running_loss = 0.0
         n_examples = 0
 
-        pbar = tqdm(self.train_loader, desc=f"Train {epoch}")
+        pbar = tqdm(self.train_loader, desc=f"Train {epoch}",ncols=100,dynamic_ncols=False)
         for batch in pbar:
             # Expectation: user dataloader yields a tuple (inputs..., labels)
             # You can adapt these lines to your use-case. For GNNs using torch_geometric,
@@ -356,7 +356,7 @@ class Experiment:
 
         loader = loaders[split]
 
-        pbar = tqdm(loader, desc=f"{split} {epoch}" if epoch else f"{split}")
+        pbar = tqdm(loader, desc=f"{split} {epoch}" if epoch else f"{split}",ncols=86,dynamic_ncols=False)
         with torch.no_grad():
             for batch in pbar:
                 inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)

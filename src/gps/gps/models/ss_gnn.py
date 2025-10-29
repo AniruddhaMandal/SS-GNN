@@ -42,11 +42,11 @@ class SubgraphGNNEncoder(nn.Module):
         self.dropout = dropout
         self.out_channels = out_channels
         if pooling == 'mean':
-            self.pooling = global_mean_pool
+            self.pooling_fn = global_mean_pool
         elif pooling == 'add':
-            self.pooling = global_add_pool
+            self.pooling_fn = global_add_pool
         elif pooling == 'max':
-            self.pooling = global_max_pool
+            self.pooling_fn = global_max_pool
         else:
             raise ValueError(f"unknown value of subgraph pooling: {pooling}")
 
@@ -94,17 +94,16 @@ class SubgraphGNNEncoder(nn.Module):
                 raise ValueError("edge_attr is required for conv_type='gine'.")
             e = self.edge_proj(edge_attr)
 
-        for conv, bn in zip(self.convs, self.bns):
+        for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
             h_res = h
-            if self.use_edges:
-                h = conv(h, edge_index, e)          # GINE expects edge features
-            else:
-                h = conv(h, edge_index)             # GIN/GCN/SAGE/GATv2 ignore edge_attr
+            h = conv(h, edge_index) if not self.use_edges else conv(h, edge_index, e)
             h = bn(h)
             h = F.relu(h)
-            h = h + h_res                           # residual (dims match)
+            h = h + h_res
+            if i < self.num_layers - 1:  # Skip dropout on last layer
+                h = F.dropout(h, p=self.dropout, training=self.training)
 
-        g = self.pooling(h, batch)
+        g = self.pooling_fn(h, batch)
 
         return g
 

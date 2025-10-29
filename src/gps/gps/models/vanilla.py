@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import (
-    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_add_pool
+    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_add_pool, global_max_pool
 )
 from torch_geometric.nn.norm import BatchNorm
 
@@ -41,7 +41,8 @@ class VanillaGNNClassifier(nn.Module):
         super().__init__()
         conv_type = conv_type.lower()
         assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
-        assert pooling in {'mean', 'add'}
+        assert pooling in {'mean', 'add', 'max'}
+        
         self.conv_type = conv_type
         self.num_layers = num_layers
         self.dropout = dropout
@@ -54,7 +55,6 @@ class VanillaGNNClassifier(nn.Module):
         # If using edge features (only GINE uses them directly)
         self.use_edges = (conv_type == 'gine')
         if self.use_edges:
-            # Project raw edge_attr -> hidden_dim once (works for all layers)
             self.edge_proj = nn.Linear(edge_dim, hidden_dim)
 
         # Build layers
@@ -71,11 +71,18 @@ class VanillaGNNClassifier(nn.Module):
             nn.Dropout(p=dropout),
             nn.Linear(hidden_dim, num_classes)
         )
-
+        
+        if self.pooling == 'mean':
+            self.pooling_fn = global_mean_pool
+        elif self.pooling == 'add':
+            self.pooling_fn = global_add_pool
+        elif self.pooling == 'max':
+            self.pooling_fn = global_max_pool
+    
     def _make_conv(self, in_dim, out_dim, mlp_layers):
         if self.conv_type == 'gine':
             mlp = make_mlp(in_dim, in_dim, out_dim, num_layers=mlp_layers)
-            return GINEConv(nn=mlp, train_eps=True)  # we project edge_attr ourselves
+            return GINEConv(nn=mlp, train_eps=True)
         if self.conv_type == 'gin':
             mlp = make_mlp(in_dim, in_dim, out_dim, num_layers=mlp_layers)
             return GINConv(nn=mlp, train_eps=True)
@@ -84,7 +91,7 @@ class VanillaGNNClassifier(nn.Module):
         if self.conv_type == 'sage':
             return SAGEConv(in_dim, out_dim)
         if self.conv_type == 'gatv2':
-            return GATv2Conv(in_dim, out_dim, heads=1, concat=True)  # keeps dim = out_dim
+            return GATv2Conv(in_dim, out_dim, heads=1, concat=True)
         raise ValueError("Unknown conv_type")
 
     # ---------- FORWARD ----------
@@ -100,21 +107,16 @@ class VanillaGNNClassifier(nn.Module):
             if edge_attr is None:
                 raise ValueError("edge_attr is required for conv_type='gine'.")
             e = self.edge_proj(edge_attr)
-
-        for conv, bn in zip(self.convs, self.bns):
+        
+        for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
             h_res = h
-            if self.use_edges:
-                h = conv(h, edge_index, e)          # GINE expects edge features
-            else:
-                h = conv(h, edge_index)             # GIN/GCN/SAGE/GATv2 ignore edge_attr
+            h = conv(h, edge_index) if not self.use_edges else conv(h, edge_index, e)
             h = bn(h)
             h = F.relu(h)
-            h = h + h_res                           # residual (dims match)
-
-        if self.pooling == 'mean':
-            g = global_mean_pool(h, batch)
-        if self.pooling == 'add':
-            g = global_add_pool(h, batch)
-        logits = self.classifier(g)                 # [B, num_classes]
-
+            h = h + h_res  
+            if i < self.num_layers - 1:  # Skip dropout on last layer
+                h = F.dropout(h, p=self.dropout, training=self.training)
+        
+        g = self.pooling_fn(h, batch)
+        logits = self.classifier(g)
         return logits
