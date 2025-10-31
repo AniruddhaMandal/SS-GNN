@@ -31,9 +31,7 @@ from __future__ import annotations
 import os
 import time
 import json
-import shutil
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Literal 
 import random 
 import numpy as np
@@ -41,11 +39,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import ugs_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
+from . import SubgraphFeaturesBatch
 from dataclasses import asdict
 
 # ------- Experiment class -------
@@ -123,6 +121,9 @@ class Experiment:
         else:
             self.best_metric = -float('inf')
         self.history = {"train_loss": [], "val_loss": []}
+
+        # Set subgraph sampler
+        self.sampler = ugs_sampler.sample_batch
 
         # Build components
         self.build()
@@ -289,6 +290,7 @@ class Experiment:
         self.model.train()
         running_loss = 0.0
         n_examples = 0
+        return {'loss': 0}
 
         pbar = tqdm(self.train_loader, desc=f"Train {epoch}",ncols=100,dynamic_ncols=False)
         for batch in pbar:
@@ -297,22 +299,29 @@ class Experiment:
             # you might receive a Batch object where `batch.x, batch.edge_index, batch.batch`
             # If subgraph sampling is required then return: 
             # `x_global`, `nodes_t`, `edge_index_t`, `edge_ptr_t`, `graph_id_t`, `k`
-            inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)
-            inputs = self._to_device(inputs)
+
+            batch, labels = self._unpack_batch(batch)
+
+            batch = batch.to(self.device)
             labels = labels.to(self.device)
 
             self.optimizer.zero_grad()
             with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
-                logits = self.model(*inputs) 
+                output = self.model(batch) 
                 #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
-                    loss = self.criterion(logits, labels.long())
-                if self.cfg.task == "Multi-Lable-Binary-Classification":
-                    loss = self.criterion(logits, labels.float())
-                if self.cfg.task == "Multi-Target-Regression":
-                    loss = self.criterion(logits, labels.float())
-                if self.cfg.task == "Multi-Class-Classification":
-                    loss = self.criterion(logits, labels.long())
+                    loss = self.criterion(output, labels.long())
+                elif self.cfg.task == "Multi-Lable-Binary-Classification":
+                    loss = self.criterion(output, labels.float())
+                elif self.cfg.task == "Multi-Target-Regression":
+                    loss = self.criterion(output, labels.float())
+                elif self.cfg.task == "Multi-Class-Classification":
+                    loss = self.criterion(output, labels.long())
+                elif self.cfg.task == "Link-Prediction":
+                    loss = self.criterion(output, labels)
+                else:
+                    raise ValueError(f"unknown task: {self.cfg.task}")
+
 
             # backward
             if self.cfg.train.use_amp:
@@ -359,23 +368,27 @@ class Experiment:
         pbar = tqdm(loader, desc=f"{split} {epoch}" if epoch else f"{split}",ncols=86,dynamic_ncols=False)
         with torch.no_grad():
             for batch in pbar:
-                inputs, labels = self._unpack_batch(batch, self.cfg.model_config.subgraph_sampling)
-                inputs = self._to_device(inputs)
+                batch, labels = self._unpack_batch(batch)
+                batch = batch.to(self.device)
                 labels = labels.to(self.device)
+
                 with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
-                    logits = self.model(*inputs) 
+                    output = self.model(batch) 
                     #user-provided criterion must accept (outputs, labels)
                     if self.cfg.task == "Binary-Classification":
-                        loss = self.criterion(logits, labels.long())
+                        loss = self.criterion(output, labels.long())
                     if self.cfg.task == "Multi-Lable-Binary-Classification":
-                        loss = self.criterion(logits, labels.float())
+                        loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Target-Regression":
-                        loss = self.criterion(logits, labels.float())
+                        loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Class-Classification":
-                        loss = self.criterion(logits, labels.long())
+                        loss = self.criterion(output, labels.long())
+                    if self.cfg.task == "Link-Prediction":
+                        loss = self.criterion(output, labels)
+
 
                 # collect logits and targets
-                all_logits.append(logits.detach().cpu())
+                all_logits.append(output.detach().cpu())
                 all_targets.append(labels.detach().cpu())
 
                 batch_size = self._get_batch_size(batch)
@@ -403,6 +416,9 @@ class Experiment:
                 if self.cfg.task == "Multi-Class-Classification":
                     all_preds  = all_logits.argmax(dim=-1)
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
+                if self.cfg.task == "Link-Prediction":
+                    all_probs = torch.sigmoid(all_logits)
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
@@ -417,62 +433,95 @@ class Experiment:
         return {"loss": avg_loss, "metric": metric_val, **metrics}
 
     # ---------- Utilities / I/O ----------
-    def _unpack_batch(self, batch, subgraph_sampling=False):
-        """Default: batch is (inputs, labels). Override if you use other formats (e.g. torch_geometric Batch).
-        Returns a tuple (inputs, labels) where `inputs` either a single object or tuple passed into model.
+    def _unpack_batch(self, batch: SubgraphFeaturesBatch) -> tuple[SubgraphFeaturesBatch, torch.Tensor]:
         """
-        if not subgraph_sampling:
-            if isinstance(batch, (list, tuple)) and len(batch) == 2:
-                return batch[0], batch[1]
-            # torch_geometric.data.Batch
-            try:
-                # common pattern: batch.x, batch.edge_index, batch.batch
-                if hasattr(batch, 'x') and hasattr(batch, 'edge_index') and hasattr(batch, 'batch'):
-                    batch.x = batch.x.float()
-                    batch.y = batch.y.float()
-                    if getattr(batch, 'edge_attr', None) is not None:
-                        batch.edge_attr = batch.edge_attr.float()
-                        return (batch.x, batch.edge_index, batch.batch, batch.edge_attr), batch.y
-                    else:
-                        return (batch.x, batch.edge_index, batch.batch), batch.y
-            except Exception as e:
-                raise ValueError(f"{e}. Unknown batch format. Override _unpack_batch to handle your dataloader output.{batch}")
+        Unpack batch data for GNN processing.
+    
+        Args:
+            batch: Input batch (tuple, list, or torch_geometric.data.Batch)
+            subgraph_sampling: Whether to perform subgraph sampling
         
-        if subgraph_sampling:
-            if not hasattr(batch, 'x') and hasattr(batch,'edge_index') and hasattr(batch,'batch') and hasattr(batch,'ptr') and hasattr(batch, 'y'):
-                raise ValueError("Unknown batch format")
-            if not getattr(self.cfg.model_config, 'subgraph_param', None):
-                raise ValueError("Subgraph parameters required in config.")
-            k = self.cfg.model_config.subgraph_param.k
-            m = self.cfg.model_config.subgraph_param.m
+        Returns:
+            Tuple of (features, labels)
+        """
+        is_link_prediction = (self.cfg.task == 'Link-Prediction')
+        edge_attr_required = (self.cfg.model_config.mpnn_type == 'gine')
+        sampling_required  = self.cfg.model_config.subgraph_sampling
+    
+        # Validate batch format
+        required_attrs = ['x', 'edge_index', 'batch']
+        if edge_attr_required:
+            required_attrs.append('edge_attr')
+        if is_link_prediction:
+            required_attrs.extend(['edge_label_index', 'edge_label'])
+        else:
+            required_attrs.append('y')
+        if sampling_required:
+            required_attrs.append('ptr')
+    
+        missing_attrs = [attr for attr in required_attrs if not hasattr(batch, attr)]
+        if missing_attrs:
+            raise ValueError(
+                f"Unknown batch format. Expected attributes: {required_attrs}. "
+                f"Missing: {missing_attrs}. "
+                f"Override _unpack_batch to handle your dataloader output. "
+                f"Received: {batch}"
+            )
+        # Minimal batch 
+        sf_batch = SubgraphFeaturesBatch(x=batch.x.float(), 
+                                         edge_index=batch.edge_index, 
+                                         batch=batch.batch)
+    
+        # Handle optional edge attributes
+        has_edge_attr = getattr(batch, 'edge_attr', None) is not None
+        if has_edge_attr:
+            sf_batch.edge_attr = batch.edge_attr.float()
+        
+        # For link prediction: labels are edge_label
+        if self.cfg.task == 'Link-Prediction':
+            sf_batch.edge_label_index = batch.edge_label_index
+            labels = batch.edge_label.float()
+        else:
+            labels = batch.y.float()
 
-            #ensure data types
-            batch.x = batch.x.float()
-            batch.y = batch.y.float()
-            if getattr(batch, 'edge_attr', None) is not None:
-                batch.edge_attr = batch.edge_attr.float()
-            # ensure device cpu before sampling
-            batch.edge_index = batch.edge_index.cpu()
-            batch.ptr = batch.ptr.cpu()
+        # load sample features
+        if self.cfg.model_config.subgraph_sampling:
+            sf_batch.ptr = batch.ptr
+            sf_batch = self._sample_and_load_subgraphs(sf_batch)
+        
+        return (sf_batch, labels)
 
-            # torch_geometric.data.Batch
-            try:
-                nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_global_t = \
-                    ugs_sampler.sample_batch(batch.edge_index, batch.ptr, m, k, mode="sample")
-                return(batch.x,batch.edge_attr,nodes_t,edge_index_t,edge_ptr_t, \
-                       sample_ptr_t, edge_src_global_t), batch.y
-            except Exception as e:
-                # fallback: produce placeholders for all graphs in this batch (safe)
-                G = int(batch.ptr.size(0) - 1)
-                nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_global_t = \
-                    self._make_placeholders(G, m, k)
-                # log warn
-                print(f"[warn] sampler failed; using placeholders for batch: {e}")
-                if getattr(batch, 'edge_attr', None) is not None:
-                    batch.edge_attr = batch.edge_attr.float()
-                return(batch.x,batch.edge_attr,nodes_t,edge_index_t,edge_ptr_t, \
-                       sample_ptr_t, edge_src_global_t), batch.y
 
+    def _sample_and_load_subgraphs(self, batch: SubgraphFeaturesBatch)->SubgraphFeaturesBatch:
+        """Handle batch unpacking with subgraph sampling."""
+        # Validate subgraph parameters
+        if not getattr(self.cfg.model_config, 'subgraph_param', None):
+            raise ValueError(
+                "Subgraph parameters required in config. "
+                "Please set cfg.model_config.subgraph_param with 'k' and 'm' values."
+            )
+    
+        k = self.cfg.model_config.subgraph_param.k
+        m = self.cfg.model_config.subgraph_param.m
+    
+        # Move to CPU for sampling (if needed by sampler)
+        batch.edge_index = batch.edge_index.cpu()
+        batch.ptr = batch.ptr.cpu()
+    
+        # Perform subgraph sampling
+        try:
+            batch.nodes_sampled, batch.edge_index_sampled, batch.edge_ptr, batch.sample_ptr, batch.edge_src_global = \
+                self.sampler(batch.edge_index, batch.ptr, m, k, mode="sample")
+        
+        except Exception as e:
+            # Fallback: use placeholders if sampling fails
+            print(f"[WARNING] Subgraph sampler failed, using placeholders: {e}")
+        
+            num_graphs = int(batch.batch.max().item()) + 1
+            batch.nodes_sampled, batch.edge_index_sampled, batch.edge_ptr, batch.sample_ptr, batch.edge_src_global = \
+                self._make_placeholders(num_graphs, m, k)
+        
+        return batch
 
     def _get_batch_size(self, batch):
         # infer a batch-size for loss averaging. Override if needed.
@@ -489,23 +538,6 @@ class Experiment:
             pass
         return 1
 
-    def _to_device(self, inputs):
-        # send inputs to device. `inputs` could be tuple/list or torch.Tensor or custom Batch
-        if isinstance(inputs, torch.Tensor):
-            return inputs.to(self.device)
-        if isinstance(inputs, (list, tuple)):
-            out = []
-            for x in inputs:
-                if isinstance(x, torch.Tensor):
-                    out.append(x.to(self.device))
-                else:
-                    out.append(x)
-            return tuple(out)
-        # custom Batch object: move it on device if it has `to`
-        if hasattr(inputs, 'to'):
-            return inputs.to(self.device)
-        return inputs
-    
     def save_checkpoint(self, epoch: int, metric: Optional[float] = None):
         # keep only last k checkpoints
         fname = f"{self.cfg.name}_epoch{epoch:03d}.pth"

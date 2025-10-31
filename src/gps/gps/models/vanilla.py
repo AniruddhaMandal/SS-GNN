@@ -5,6 +5,7 @@ from torch_geometric.nn import (
     GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_add_pool, global_max_pool
 )
 from torch_geometric.nn.norm import BatchNorm
+from gps import SubgraphFeaturesBatch
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
@@ -31,7 +32,7 @@ class VanillaGNNClassifier(nn.Module):
                  in_channels: int,
                  edge_dim: int,
                  hidden_dim: int,
-                 num_classes: int = 10,
+                 out_dim: int = 10,
                  num_layers: int = 5,
                  mlp_layers: int = 2,
                  dropout: float = 0.1,
@@ -41,12 +42,12 @@ class VanillaGNNClassifier(nn.Module):
         super().__init__()
         conv_type = conv_type.lower()
         assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
-        assert pooling in {'mean', 'add', 'max'}
+        assert pooling in {'mean', 'add', 'max', 'off'}
         
         self.conv_type = conv_type
         self.num_layers = num_layers
         self.dropout = dropout
-        self.num_classes = num_classes
+        self.out_dim = out_dim
         self.pooling = pooling
 
         # Project inputs to hidden_dim once so all layers are width-matched.
@@ -64,20 +65,14 @@ class VanillaGNNClassifier(nn.Module):
             self.convs.append(self._make_conv(hidden_dim, hidden_dim, mlp_layers))
             self.bns.append(BatchNorm(hidden_dim))
 
-        # Head
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(hidden_dim, num_classes)
-        )
-        
         if self.pooling == 'mean':
             self.pooling_fn = global_mean_pool
         elif self.pooling == 'add':
             self.pooling_fn = global_add_pool
         elif self.pooling == 'max':
             self.pooling_fn = global_max_pool
+        elif self.pooling == 'off':
+            self.pooling_fn = lambda h, b: h
     
     def _make_conv(self, in_dim, out_dim, mlp_layers):
         if self.conv_type == 'gine':
@@ -95,13 +90,17 @@ class VanillaGNNClassifier(nn.Module):
         raise ValueError("Unknown conv_type")
 
     # ---------- FORWARD ----------
-    def forward(self, x, edge_index, batch, edge_attr=None):
+    def forward(self, batch: SubgraphFeaturesBatch):
         """
         x: [N, in_channels]
         edge_index: [2, E]
         batch: [N]
         edge_attr: [E, edge_dim]  (required if conv_type='gine')
         """
+        x = batch.x
+        edge_attr = batch.edge_attr
+        edge_index = batch.edge_index
+        
         h = self.node_proj(x)
         if self.use_edges:
             if edge_attr is None:
@@ -117,6 +116,5 @@ class VanillaGNNClassifier(nn.Module):
             if i < self.num_layers - 1:  # Skip dropout on last layer
                 h = F.dropout(h, p=self.dropout, training=self.training)
         
-        g = self.pooling_fn(h, batch)
-        logits = self.classifier(g)
-        return logits
+        g = self.pooling_fn(h, batch.batch)
+        return g

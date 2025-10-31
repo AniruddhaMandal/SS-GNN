@@ -7,6 +7,7 @@ from torch_geometric.nn import (
     GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_add_pool, global_max_pool, global_sort_pool
 )
 from torch_geometric.nn.norm import BatchNorm
+from gps import SubgraphFeaturesBatch
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
@@ -321,22 +322,22 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         )
 
     # ---------- FORWARD ----------
-    def forward(self, 
-                x_global, 
-                edge_attr,
-                nodes_t, 
-                edge_index_t, 
-                edge_ptr_t,
-                sample_ptr_t,
-                edge_src_global_t
-                ):
+    def forward(self, batch: SubgraphFeaturesBatch):
         """
         x: [N, in_channels]
         edge_index: [2, E]
         edge_attr: [E, edge_dim]  (required if conv_type='gine')
         """
+        x_global    = batch.x 
+        edge_attr   = batch.edge_attr
+        nodes_t     = batch.nodes_sampled
+        edge_index_t= batch.edge_index_sampled 
+        edge_ptr_t  = batch.edge_ptr
+        sample_ptr_t = batch.sample_ptr
+        edge_src_global_t = batch.edge_src_global
+
         device = x_global.device
-        batch_size = sample_ptr_t.size(0)-1
+        num_graphs = sample_ptr_t.size(0)-1
         sample_emb = self.encode_subgraphs(x=x_global,
                                            edge_attr=edge_attr,
                                             nodes_t=nodes_t,
@@ -344,11 +345,10 @@ class SubgraphSamplingGNNClassifier(nn.Module):
                                             edge_ptr_t=edge_ptr_t,
                                             edge_src_global_t=edge_src_global_t)  # [B_total, H_dim]
 
-        global_graph_ptr = torch.repeat_interleave(torch.arange(0,batch_size, device=device),sample_ptr_t[1:]-sample_ptr_t[:-1])
+        global_graph_ptr = torch.repeat_interleave(torch.arange(0, num_graphs, device=device),sample_ptr_t[1:]-sample_ptr_t[:-1])
         graph_emb = self.aggregator(sample_emb, global_graph_ptr)  # [num_graph, H]
 
-        logits = self.classifier(graph_emb)  # [G, num_classes]
-        return logits
+        return graph_emb
 
     def encode_subgraphs(
         self,

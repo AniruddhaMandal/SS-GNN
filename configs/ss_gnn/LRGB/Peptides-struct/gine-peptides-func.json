@@ -1,0 +1,54 @@
+{
+    "name":"SubgraphSampling: Peptides-func SS GINE",
+    "dataset_name": "Peptides-func",
+    "model_name": "SS-GNN",
+    "task": "Multi-Lable-Binary-Classification",
+
+    "model_config": 
+    {
+        "name": "ss_gnn",
+        "mpnn_type": "gine",
+        "node_feature_dim": 9,
+        "edge_feature_dim": 3,
+        "hidden_dim": 300,
+        "mpnn_layers": 5,
+        "dropout": 0.1,
+        "out_dim": 10,
+        "pooling": "mean",
+        "subgraph_sampling": true,
+        "subgraph_param": {
+            "k": 5,
+            "m": 100,
+            "pooling": "mean"
+        }
+
+    },
+
+    "train": 
+    {
+        "epochs": 50,
+        "train_batch_size": 64,
+        "val_batch_size": 64,
+        "lr": 1e-3,
+        "weight_decay": 1e-5,
+        "optimizer": "adam",  
+        "scheduler": {
+            "type":"reduce_on_plateau",
+            "patience":20
+        },
+        "loss_fn": "BCEWithLogitsLoss",
+        "metric": "AP"
+    },
+
+    "device":"cuda",
+    "seed": 42,
+    "num_workers": 4,
+    "log_dir": "logs",
+    "checkpoint_dir": "checkpoints",
+    "cache_dir": "cache",
+    "save_every": 1,
+    "keep_last_k": 3,
+
+    "use_amp": false,
+    "grad_clip": 2.0
+}
