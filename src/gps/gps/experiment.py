@@ -290,7 +290,6 @@ class Experiment:
         self.model.train()
         running_loss = 0.0
         n_examples = 0
-        return {'loss': 0}
 
         pbar = tqdm(self.train_loader, desc=f"Train {epoch}",ncols=100,dynamic_ncols=False)
         for batch in pbar:
