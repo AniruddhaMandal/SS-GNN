@@ -22,8 +22,8 @@
     "train": 
     {
         "epochs": 50,
-        "train_batch_size": 64,
-        "val_batch_size": 64,
+        "train_batch_size": 128,
+        "val_batch_size": 128,
         "lr": 1e-3,
         "weight_decay": 1e-5,
         "optimizer": "adam",  
@@ -32,7 +32,7 @@
             "patience":20
         },
         "loss_fn": "BCEWithLogitsLoss",
-        "metric": "AP"
+        "metric": "MRR"
     },
 
     "device":"cuda",

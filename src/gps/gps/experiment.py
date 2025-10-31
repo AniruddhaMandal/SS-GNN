@@ -416,8 +416,7 @@ class Experiment:
                     all_preds  = all_logits.argmax(dim=-1)
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 if self.cfg.task == "Link-Prediction":
-                    all_probs = torch.sigmoid(all_logits)
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_logits.numpy())
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
