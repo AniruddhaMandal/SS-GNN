@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, Callable, Dict, Optional, Tuple, Literal, Mapping
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -15,7 +16,7 @@ MpnnType = Literal["gcn", "gin", "graphsage"]
 ModelFactory = Callable[["ExperimentConfig"], nn.Module]
 DataloaderFactory = Callable[["ExperimentConfig"], Tuple[DataLoader, DataLoader, Optional[DataLoader]]]
 CriterionFactory = Callable[["ExperimentConfig"], nn.Module]
-MetricFn = Callable[[torch.Tensor, torch.Tensor], Dict[str, float]]
+MetricFn = Callable[[np.ndarray, np.ndarray], Dict[str, float]]
 
 
 def _default_device() -> str:

@@ -36,58 +36,71 @@ def _metric_decoretor(func,name):
         return {name: score}
     return wrapper
 
-def debug_predictions(edge_label, pred_logits, epoch):
-    """Debug to see what your model is learning"""
-    pred_probs = pred_logits
-    labels = edge_label.cpu().numpy()
-    
-    print(f"\nEpoch {epoch} Debug:")
-    print(f"Positive edges (label=1): mean_pred={pred_probs[labels==1].mean():.4f}")
-    print(f"Negative edges (label=0): mean_pred={pred_probs[labels==0].mean():.4f}")
-    
-    # For MRR: Higher predictions should be positive edges
-    if pred_probs[labels==1].mean() < pred_probs[labels==0].mean():
-        print("⚠️ WARNING: Model predicting BACKWARDS!")
-
-def mean_reciprocal_rank(target, predict):
-    """
-    Calculate Mean Reciprocal Rank (MRR) for binary relevance.
-    
-    Parameters:
-    -----------
-    target : numpy array of shape [num_edges_to_predict,]
-        Binary array where 1 indicates relevant/positive edge, 0 otherwise
-    predict : numpy array of shape [num_edges_to_predict,]
-        Predicted scores for each edge (higher score = more likely)
-    
+def mean_reciprocal_rank(all_logits_batches, all_label_batches, target_index_batches):
+    '''
+    Calculates filtered MRR for the entire dataset 
+    Args:
+        all_logits: `list(numpy.array)` list of batches of logits for all the target edges.
+        all_edge_labels: `list(numpy.array)` list of batches of  true labels for target edes. 
+        target_index: `list(numpy.array)` list of batches of target edge index(2d tensor).
+        graph_id_batches: `list(numpy.array)` list of graph id for each node of the batch(batch.batch.to_numpy()) 
     Returns:
-    --------
-    float : The Mean Reciprocal Rank score
+        mean_reciprocal_rank: `float`
+    '''
+    print("\ncalculating MRR metric...")
+    num_batches = len(all_logits_batches)
+    all_mrr = []
+    for b in range(num_batches):
+        logits = all_logits_batches[b]
+        t_edge_labels = all_label_batches[b]
+        t_edge_index = target_index_batches[b]
+
+        for head in np.unique(t_edge_index[0]):
+            head_mask = t_edge_index[0] == head
+            logits_for_head = logits[head_mask]
+            labels_for_head = t_edge_labels[head_mask]
+            all_mrr += filtered_mrr_single_head(logits_for_head, labels_for_head)
+    all_mrr= np.array(all_mrr)
+    return np.mean(all_mrr)
+
+def filtered_mrr_single_head(logits, edge_labels)->list:
     """
-    # Sort indices by predicted scores in descending order
-    #pred_probs = target 
-    #labels = predict
+    Calculate filtered MRR for a single head.
+    Args:
+        logits: (num_candidates,) - scores for all candidate tails
+        edge_labels: (num_candidates,) - labels (0 or 1) for each candidate
+    Returns:
+        reciprocal_ranks: Reciprocal Ranks for all true edges for this head
+    """
+    # Find all true tails (where label == 1)
+    true_tail_indices = np.where(edge_labels == 1)[0]
     
-    #print(f"\nEpoch {0} Debug:")
-    #print(f"Positive edges (label=1): mean_pred={pred_probs[labels==1].mean():.4f}")
-    #print(f"Negative edges (label=0): mean_pred={pred_probs[labels==0].mean():.4f}")
+    reciprocal_ranks = []
     
-    ## For MRR: Higher predictions should be positive edges
-    #if pred_probs[labels==1].mean() < pred_probs[labels==0].mean():
-        #print("⚠️ WARNING: Model predicting BACKWARDS!")
-        #exit()
-    sorted_indices = np.argsort(-predict)
+    if len(true_tail_indices) == 0:
+        return reciprocal_ranks  # No true edges
+
+    # Evaluate each true tail separately (filtered setting)
+    for target_idx in true_tail_indices:
+        # Create filter: exclude OTHER true tails (not current target)
+        filter_mask = np.ones(len(logits), dtype=bool)
+        
+        for other_true_idx in true_tail_indices:
+            if other_true_idx != target_idx:
+                filter_mask[other_true_idx] = False
+        
+        # Get filtered candidates
+        filtered_logits = logits[filter_mask]
+        filtered_indices = np.arange(len(logits))[filter_mask]
+        
+        # Sort by logits (descending)
+        sorted_order = np.argsort(-filtered_logits)
+        sorted_indices = filtered_indices[sorted_order]
+        
+        # Find rank of target
+        rank = np.where(sorted_indices == target_idx)[0][0] + 1  # 1-indexed
+        reciprocal_ranks.append(1.0 / rank)
     
-    # Get the sorted target values
-    sorted_target = target[sorted_indices]
-    
-    # Find positions of all relevant items (1-indexed ranks)
-    relevant_positions = np.where(sorted_target == 1)[0] + 1
-    
-    # MRR is the reciprocal of the first relevant item's rank
-    if len(relevant_positions) > 0:
-        mrr = 1.0 / relevant_positions[0]
-    else:
-        mrr = 0.0
-    
-    return mrr
+    # for all true tails for this head
+    return reciprocal_ranks
+

@@ -353,6 +353,7 @@ class Experiment:
         n_examples = 0
         all_logits = []
         all_targets = []
+        all_edge_label_index = []
         loaders = {
             "test": self.test_loader,
             "train": self.train_loader,
@@ -387,16 +388,25 @@ class Experiment:
 
 
                 # collect logits and targets
-                all_logits.append(output.detach().cpu())
-                all_targets.append(labels.detach().cpu())
+                if self.cfg.task == "Link-Prediction":
+                    all_logits.append(output.detach().cpu().numpy())
+                    all_targets.append(labels.detach().cpu().numpy())
+                    all_edge_label_index.append(batch.edge_label_index.detach().cpu().numpy())
+
+                else:
+                    all_logits.append(output.detach().cpu())
+                    all_targets.append(labels.detach().cpu())
+                    all_edge_label_index.append(batch.edge_label_index.detach().cpu())
 
                 batch_size = self._get_batch_size(batch)
                 running_loss += loss.item() * batch_size
                 n_examples += batch_size
 
         avg_loss = running_loss / max(1, n_examples)
-        all_logits = torch.cat(all_logits, dim=0)
-        all_targets = torch.cat(all_targets, dim=0)
+        if self.cfg.task != 'Link-Prediction':
+            all_logits = torch.cat(all_logits, dim=0)
+            all_targets = torch.cat(all_targets, dim=0)
+            all_edge_label_index = torch.cat(all_edge_label_index, dim=1)  # Concat along dim=1 for (2, N)
 
         metrics = {}
         if callable(self.cfg.metric_fn):
@@ -416,10 +426,13 @@ class Experiment:
                     all_preds  = all_logits.argmax(dim=-1)
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 if self.cfg.task == "Link-Prediction":
-                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_logits.numpy())
+                    metrics = self.cfg.metric_fn(all_logits, 
+                                                 all_targets, 
+                                                 all_edge_label_index)
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)
+                exit()
         metric_val = metrics.get(self.cfg.train.metric)
 
         # tensorboard
