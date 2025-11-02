@@ -179,9 +179,6 @@ class Experiment:
         # criterion
         if callable(self.cfg.criterion_fn):
             self.criterion = self.cfg.criterion_fn()
-        else:
-            # default: cross entropy
-            self.criterion = nn.CrossEntropyLoss(**self.cfg.criterion_kwargs)
 
         # dataloaders
         if callable(self.cfg.dataloader_fn):
@@ -202,7 +199,7 @@ class Experiment:
 
         # AMP scaler
         if self.cfg.train.use_amp:
-            self.scaler = torch.amp.GradScaler()
+            self.scaler = torch.cuda.amp.GradScaler(enabled=True)
 
         # optionally resume
         if self.cfg.resume_from:
