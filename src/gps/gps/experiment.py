@@ -29,6 +29,7 @@ Notes
 
 from __future__ import annotations
 import os
+from pathlib import Path
 import time
 import json
 import logging
@@ -544,105 +545,285 @@ class Experiment:
             pass
         return 1
 
+
+
+    @staticmethod
+    def _safe_torch_load(path: Path, map_location):
+        """Safely load a PyTorch checkpoint handling different PyTorch versions.
+    
+        Args:
+            path: Path to checkpoint file
+            map_location: Device to map tensors to
+        
+        Returns:
+            Loaded state dictionary
+        """
+        # Try with weights_only=False first (for optimizer states, configs, etc.)
+        try:
+            return torch.load(path, map_location=map_location, weights_only=False)
+        except TypeError:
+            # PyTorch < 2.6 doesn't have weights_only parameter
+            return torch.load(path, map_location=map_location)
+        except Exception as e:
+            # If we get the numpy._core error, add safe globals and retry
+            if "numpy._core.multiarray.scalar" in str(e):
+                try:
+                    # Add numpy types to safe globals
+                    import numpy as np
+                    torch.serialization.add_safe_globals([
+                        np.core.multiarray.scalar,
+                        np.ndarray,
+                        np.dtype,
+                    ])
+                    return torch.load(path, map_location=map_location, weights_only=False)
+                except:
+                    pass
+            raise
+
+
     def save_checkpoint(self, epoch: int, metric: Optional[float] = None):
-        # keep only last k checkpoints
-        fname = f"{self.cfg.name}_epoch{epoch:03d}.pth"
-        path = os.path.join(self.cfg.checkpoint_dir, fname)
-        _fname_best_model = f"best_model.pth"
-        _path_best_model = os.path.join(self.cfg.checkpoint_dir, _fname_best_model)
-        if (self.cfg.train.metric in self.down_metrics) and (self.best_metric>metric):
-            _best_metric = metric
-        elif (self.cfg.train.metric not in self.down_metrics) and (self.best_metric<metric):
-            _best_metric = metric
+        """Save model checkpoint and optionally update best model.
+    
+        Args:
+            epoch: Current training epoch
+            metric: Validation metric value for this epoch
+        """
+        # Create checkpoint directory if it doesn't exist
+        checkpoint_dir = Path(self.cfg.checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    
+        # Determine if this is the best model
+        is_best = self._is_best_metric(metric)
+    
+        # Update best metric if needed
+        if is_best:
+            self.best_metric = metric
+            self.logger.info(f"New best model! Metric: {metric:.4f}")
+    
+        # Prepare checkpoint state
+        state = self._create_checkpoint_state(epoch, metric)
+    
+        # Save regular checkpoint
+        checkpoint_path = checkpoint_dir / f"{self.cfg.name}_epoch{epoch:03d}.pth"
+        self._save_state(state, checkpoint_path)
+    
+        # Save best model if applicable
+        if is_best:
+            best_path = checkpoint_dir / "best_model.pth"
+            self._save_state(state, best_path)
+    
+        # Clean up old checkpoints
+        self._cleanup_old_checkpoints(checkpoint_dir)
+
+
+    def _is_best_metric(self, metric: Optional[float]) -> bool:
+        """Check if the current metric is the best so far.
+    
+        Args:
+            metric: Current metric value
+        
+        Returns:
+            True if this is the best metric, False otherwise
+        """
+        if metric is None:
+            return False
+    
+        is_down_metric = self.cfg.train.metric in self.down_metrics
+    
+        if is_down_metric:
+            return metric < self.best_metric
         else:
-            _best_metric = self.best_metric
+            return metric > self.best_metric
+
+
+    def _create_checkpoint_state(self, epoch: int, metric: Optional[float]) -> Dict[str, Any]:
+        """Create checkpoint state dictionary.
+    
+        Args:
+            epoch: Current epoch
+            metric: Current metric value
+        
+        Returns:
+            Dictionary containing all checkpoint information
+        """
         state = {
             'epoch': epoch,
             'model_state': self.model.state_dict(),
             'optim_state': self.optimizer.state_dict(),
             'cfg': self._serialize_cfg(),
-            'best_metric': _best_metric
+            'best_metric': self.best_metric if self._is_best_metric(metric) else self.best_metric,
+            'current_metric': metric,
         }
+    
+        # Add gradient scaler state if using mixed precision
         if self.scaler is not None:
             state['scaler'] = self.scaler.state_dict()
-        torch.save(state, path)
+    
+        # Optionally add scheduler state if it exists
+        if hasattr(self, 'scheduler') and self.scheduler is not None:
+            state['scheduler_state'] = self.scheduler.state_dict()
+    
+        return state
 
-        if (self.cfg.train.metric in self.down_metrics) and (self.best_metric>metric):
-            self.best_metric = metric
-            print("Best Model Retrieved!")
-            torch.save(state,_path_best_model)
-        elif (self.cfg.train.metric not in self.down_metrics) and (self.best_metric<metric):
-            self.best_metric = metric
-            print("Best Model Retrieved!")
-            torch.save(state,_path_best_model)
-        else:
-            pass
 
-        # housekeeping: remove old checkpoints keeping last K
-        files = sorted([f for f in os.listdir(self.cfg.checkpoint_dir) if f.startswith(self.cfg.name)])
-        if len(files) > self.cfg.keep_last_k:
-            for f in files[:-self.cfg.keep_last_k]:
-                try:
-                    os.remove(os.path.join(self.cfg.checkpoint_dir, f))
-                except Exception:
-                    pass
-
-    def _serialize_cfg(self):
-        """Return a JSON/serializable-friendly representation of the ExperimentConfig.
-
-        - replaces callable values with a short string description
-        - attempts to keep nested dicts / dataclasses, but falls back to repr() where needed.
+    def _save_state(self, state: Dict[str, Any], path: Path):
+        """Safely save checkpoint state to disk.
+    
+        Args:
+            state: Checkpoint state dictionary
+            path: Path to save checkpoint
         """
-        serial = {}
-        for k, v in self.cfg.__dict__.items():
-            # skip writer, logger, device, or other non-config runtime objects if present
-            if k in ('writer', 'logger'):
-                continue
-            # represent callables as strings (they are not picklable)
-            if callable(v):
-                try:
-                    name = getattr(v, "__name__", None) or repr(v)
-                except Exception:
-                    name = repr(v)
-                serial[k] = f"<callable {name}>"
-                continue
+        try:
+            # Save to temporary file first to avoid corruption
+            temp_path = path.with_suffix('.pth.tmp')
+            torch.save(state, temp_path)
+        
+            # Atomic rename
+            temp_path.replace(path)
+            self.logger.info(f"Checkpoint saved: {path}")
+        except Exception as e:
+            self.logger.error(f"Failed to save checkpoint {path}: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
 
-            # try common serializable types
+
+    def _cleanup_old_checkpoints(self, checkpoint_dir: Path):
+        """Remove old checkpoints, keeping only the last K.
+    
+        Args:
+            checkpoint_dir: Directory containing checkpoints
+        """
+        try:
+            # Find all epoch checkpoints (exclude best_model.pth)
+            pattern = f"{self.cfg.name}_epoch*.pth"
+            files = sorted(
+                checkpoint_dir.glob(pattern),
+                key=lambda p: p.stat().st_mtime
+            )
+        
+            # Remove old checkpoints
+            if len(files) > self.cfg.keep_last_k:
+                for old_file in files[:-self.cfg.keep_last_k]:
+                    try:
+                        old_file.unlink()
+                        self.logger.info(f"Removed old checkpoint: {old_file.name}")
+                    except Exception as e:
+                        self.logger.warning(f"Could not remove {old_file}: {e}")
+        except Exception as e:
+            self.logger.warning(f"Checkpoint cleanup failed: {e}")
+
+
+    def _serialize_cfg(self) -> Dict[str, Any]:
+        """Return a JSON-serializable representation of the ExperimentConfig.
+    
+        Returns:
+            Serialized configuration dictionary
+        """
+        def _serialize_value(v: Any) -> Any:
+            """Recursively serialize a value."""
+            # Handle callables
+            if callable(v):
+                return f"<callable {getattr(v, '__name__', repr(v))}>"
+        
+            # Try JSON serialization
             try:
-                # simple attempt: JSON-friendly
-                import json
                 json.dumps(v)
-                serial[k] = v
-            except Exception:
-                # attempt to convert dataclass / SimpleNamespace / nested dicts
+                return v
+            except (TypeError, ValueError):
+                pass
+        
+            # Handle objects with __dict__
+            if hasattr(v, "__dict__"):
+                return {k: _serialize_value(vv) for k, vv in v.__dict__.items()}
+        
+            # Handle common iterables
+            if isinstance(v, (list, tuple)):
                 try:
-                    # for objects like SimpleNamespace or dataclasses return dict of attrs
-                    if hasattr(v, "__dict__"):
-                        sub = {}
-                        for kk, vv in v.__dict__.items():
-                            if callable(vv):
-                                sub[kk] = f"<callable {getattr(vv,'__name__', repr(vv))}>"
-                            else:
-                                try:
-                                    json.dumps(vv)
-                                    sub[kk] = vv
-                                except Exception:
-                                    sub[kk] = repr(vv)
-                        serial[k] = sub
-                    else:
-                        serial[k] = repr(v)
+                    return [_serialize_value(item) for item in v]
                 except Exception:
-                    serial[k] = repr(v)
+                    return repr(v)
+        
+            if isinstance(v, dict):
+                try:
+                    return {k: _serialize_value(vv) for k, vv in v.items()}
+                except Exception:
+                    return repr(v)
+        
+            # Fallback to repr
+            return repr(v)
+    
+        serial = {}
+        excluded_keys = {'writer', 'logger', 'device'}
+    
+        for k, v in self.cfg.__dict__.items():
+            if k in excluded_keys:
+                continue
+            serial[k] = _serialize_value(v)
+    
         return serial
 
-    def load_checkpoint(self, path: str):
-        self.logger.info("Loading checkpoint: %s", path)
-        state = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(state['model_state'])
-        self.optimizer.load_state_dict(state['optim_state'])
+
+    def load_checkpoint(self, path: str, strict: bool = True, load_optimizer: bool = True):
+        """Load checkpoint from disk.
+    
+        Args:
+            path: Path to checkpoint file
+            strict: Whether to strictly enforce state dict loading
+            load_optimizer: Whether to load optimizer state
+        
+        Returns:
+            Loaded checkpoint state dictionary
+        """
+        path = Path(path)
+    
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+    
+        self.logger.info(f"Loading checkpoint: {path}")
+    
+        try:
+            state = self._safe_torch_load(path, self.device)
+        except Exception as e:
+            self.logger.error(f"Failed to load checkpoint: {e}")
+            raise
+    
+        # Load model state
+        try:
+            self.model.load_state_dict(state['model_state'], strict=strict)
+        except Exception as e:
+            self.logger.error(f"Failed to load model state: {e}")
+            if strict:
+                raise
+            self.logger.warning("Continuing with partial model loading...")
+    
+        # Load optimizer state
+        if load_optimizer and 'optim_state' in state:
+            try:
+                self.optimizer.load_state_dict(state['optim_state'])
+            except Exception as e:
+                self.logger.warning(f"Failed to load optimizer state: {e}")
+    
+        # Load gradient scaler state
         if 'scaler' in state and self.scaler is not None:
-            self.scaler.load_state_dict(state['scaler'])
+            try:
+                self.scaler.load_state_dict(state['scaler'])
+            except Exception as e:
+                self.logger.warning(f"Failed to load scaler state: {e}")
+    
+        # Load scheduler state if available
+        if 'scheduler_state' in state and hasattr(self, 'scheduler') and self.scheduler is not None:
+            try:
+                self.scheduler.load_state_dict(state['scheduler_state'])
+            except Exception as e:
+                self.logger.warning(f"Failed to load scheduler state: {e}")
+    
+        # Update best metric
         self.best_metric = state.get('best_metric', self.best_metric)
+    
+        epoch = state.get('epoch', 0)
+        self.logger.info(f"Checkpoint loaded successfully (epoch {epoch})")
+    
         return state
 
     def _make_placeholders(self, G, m_per_graph, k):
