@@ -393,7 +393,6 @@ class Experiment:
                 else:
                     all_logits.append(output.detach().cpu())
                     all_targets.append(labels.detach().cpu())
-                    all_edge_label_index.append(batch.edge_label_index.detach().cpu())
 
                 batch_size = self._get_batch_size(batch)
                 running_loss += loss.item() * batch_size
@@ -403,7 +402,6 @@ class Experiment:
         if self.cfg.task != 'Link-Prediction':
             all_logits = torch.cat(all_logits, dim=0)
             all_targets = torch.cat(all_targets, dim=0)
-            all_edge_label_index = torch.cat(all_edge_label_index, dim=1)  # Concat along dim=1 for (2, N)
 
         metrics = {}
         if callable(self.cfg.metric_fn):
