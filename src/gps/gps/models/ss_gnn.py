@@ -44,7 +44,7 @@ class SubgraphGNNEncoder(nn.Module):
         self.out_channels = out_channels
         if pooling == 'mean':
             self.pooling_fn = global_mean_pool
-        elif pooling == 'add':
+        elif pooling in ['add', 'sum']:
             self.pooling_fn = global_add_pool
         elif pooling == 'max':
             self.pooling_fn = global_max_pool

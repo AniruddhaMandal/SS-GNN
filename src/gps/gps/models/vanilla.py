@@ -42,7 +42,7 @@ class VanillaGNNClassifier(nn.Module):
         super().__init__()
         conv_type = conv_type.lower()
         assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
-        assert pooling in {'mean', 'add', 'max', 'off'}
+        assert pooling in {'mean', 'add', 'max', 'sum', 'off'}
         
         self.conv_type = conv_type
         self.num_layers = num_layers
@@ -67,7 +67,7 @@ class VanillaGNNClassifier(nn.Module):
 
         if self.pooling == 'mean':
             self.pooling_fn = global_mean_pool
-        elif self.pooling == 'add':
+        elif self.pooling in ['add', 'sum']:
             self.pooling_fn = global_add_pool
         elif self.pooling == 'max':
             self.pooling_fn = global_max_pool

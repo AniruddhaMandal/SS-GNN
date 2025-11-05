@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 # ----- Type aliases -----
-PoolingType = Literal["mean", "max", "add", "off"]
+PoolingType = Literal["mean", "max", "add", "sum", "off"]
 OptimizerType = Literal["adam", "adamw", "sgd"]
 MpnnType = Literal["gcn", "gin", "graphsage"]
 

@@ -28,7 +28,7 @@ Notes
 """
 
 from __future__ import annotations
-import os
+import os, sys, warnings
 from pathlib import Path
 import time
 import json
@@ -46,6 +46,18 @@ from tqdm.auto import tqdm
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
 from dataclasses import asdict
+
+# ------- VSCode Debug
+
+def running_in_vscode_debug():
+    trace = sys.gettrace()
+    return (
+        (trace is not None and "debugpy" in str(trace))
+        or "debugpy" in sys.modules
+    )
+
+if running_in_vscode_debug():
+    warnings.simplefilter("error", UserWarning)
 
 # ------- Experiment class -------
 
@@ -316,6 +328,9 @@ class Experiment:
                     loss = self.criterion(output, labels.long())
                 elif self.cfg.task == "Link-Prediction":
                     loss = self.criterion(output, labels)
+                elif self.cfg.task == "Regression":
+                    loss = self.criterion(output, labels.unsqueeze(-1))
+
                 else:
                     raise ValueError(f"unknown task: {self.cfg.task}")
 
@@ -383,6 +398,8 @@ class Experiment:
                         loss = self.criterion(output, labels.long())
                     if self.cfg.task == "Link-Prediction":
                         loss = self.criterion(output, labels)
+                    if self.cfg.task == "Regression":
+                        loss = self.criterion(output, labels.unsqueeze(-1))
 
 
                 # collect logits and targets
@@ -421,6 +438,8 @@ class Experiment:
                 if self.cfg.task == "Multi-Class-Classification":
                     all_preds  = all_logits.argmax(dim=-1)
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
+                if self.cfg.task == "Regression":
+                    metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.squeeze().numpy())
                 if self.cfg.task == "Link-Prediction":
                     metrics = self.cfg.metric_fn(all_logits, 
                                                  all_targets, 
