@@ -111,7 +111,7 @@ class Experiment:
         # logging
         self.logger = self._setup_logger()
         self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
-        self.writer.add_hparams(self.cfg.to_dict(),{})
+        self.writer.add_hparams(self.cfg.parameter_dict(),{})
 
         # deterministic
         self._set_seed(cfg.seed)

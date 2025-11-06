@@ -107,36 +107,17 @@ class ExperimentConfig:
     criterion_fn: Optional[CriterionFactory] = None
     metric_fn: Optional[MetricFn] = None
 
-    def to_dict(self) -> dict:
-        """Convert to flat dictionary with dotted keys for TensorBoard hparams."""
-        from dataclasses import fields, is_dataclass
-        import torch
-    
-        def flatten_dict(d, parent_key='', sep='.'):
-            """Flatten nested dict with dotted keys."""
-            items = []
-            for k, v in d.items():
-                new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            
-                if callable(v) or v is None:
-                    continue
-                elif isinstance(v, dict):
-                    items.extend(flatten_dict(v, new_key, sep=sep).items())
-                elif isinstance(v, (int, float, str, bool, torch.Tensor)):
-                    items.append((new_key, v))
-                elif is_dataclass(v):
-                    nested = {
-                        f.name: getattr(v, f.name)
-                        for f in fields(v)
-                    }
-                    items.extend(flatten_dict(nested, new_key, sep=sep).items())
-                # Skip lists, tuples, and other types
-        
-            return dict(items)
-    
-        # Convert self to dict first
-        self_dict = {f.name: getattr(self, f.name) for f in fields(self)}
-        return flatten_dict(self_dict)
+    def parameter_dict(self) -> dict:
+        """Add params for TensorBoard hparams."""
+        items =[ 
+            ('hidden_dim', self.model_config.hidden_dim),
+            ('layers', self.model_config.mpnn_layers),
+            ('aggregation', self.model_config.pooling),
+            ('k', self.model_config.subgraph_param.k),
+            ('m', self.model_config.subgraph_param.m),
+        ]
+        return dict(items)
+
 
 # ----- Subgraph Batch Features ------
 
