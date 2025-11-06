@@ -51,6 +51,7 @@ DATASET_REG = _Registry()
 TRANSFORM_REG = _Registry()
 METRIC_REG = _Registry()
 LOSS_REG = _Registry()
+AGGREGATOR_REG = _Registry()
 
 # Decorators for each registry
 def register_model(name: str, overwrite: bool = False):
@@ -83,6 +84,12 @@ def register_loss(name: str, overwrite: bool = False):
         return obj
     return dec
 
+def register_aggregator(name: str, overwrite: bool = False):
+    def dec(obj: Callable):
+        AGGREGATOR_REG.register(name, obj, overwrite=overwrite)
+        return obj
+    return dec
+
 # Getter helpers
 def get_model(name: str) -> Callable:
     return MODEL_REG.get(name)
@@ -98,6 +105,9 @@ def get_metric(name: str) -> Callable:
 
 def get_loss(name: str) -> Callable:
     return LOSS_REG.get(name)
+
+def get_aggregator(name: str) -> Callable:
+    return AGGREGATOR_REG.get(name)
 
 # Listing helpers
 def list_models() -> Iterable[str]:

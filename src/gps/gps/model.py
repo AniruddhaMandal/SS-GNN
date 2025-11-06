@@ -28,8 +28,8 @@ def SSGNN(cfg: ExperimentConfig):
                                           num_layers=cfg.model_config.mpnn_layers,
                                           dropout=cfg.model_config.dropout,
                                           conv_type=cfg.model_config.mpnn_type,
-                                          graph_level_pooling=cfg.model_config.pooling,
-                                          subgraph_level_pooling=cfg.model_config.subgraph_param.pooling)
+                                          aggregator=cfg.model_config.pooling,
+                                          pooling=cfg.model_config.subgraph_param.pooling)
 
     return model
 

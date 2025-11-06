@@ -11,14 +11,14 @@
     "node_feature_dim": 28,         
     "edge_feature_dim": 4,          
     "hidden_dim": 64,               
-    "mpnn_layers": 6,
+    "mpnn_layers": 4,
     "dropout": 0.0,
     "out_dim": 1,
-    "pooling": "mean",
+    "pooling": "attention",
     "subgraph_sampling": true,
     "subgraph_param": {
-      "k": 10,
-      "m": 50,
+      "k": 8,
+      "m": 200,
       "pooling": "sum"
     }
   },
@@ -43,7 +43,7 @@
   "seed": 42,
   "num_workers": 4,
 
-  "log_dir": "logs",
+  "log_dir": "logs/SS-GNN",
   "checkpoint_dir": "checkpoints",
   "cache_dir": "cache",
 

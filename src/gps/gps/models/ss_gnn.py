@@ -8,6 +8,8 @@ from torch_geometric.nn import (
 )
 from torch_geometric.nn.norm import BatchNorm
 from gps import SubgraphFeaturesBatch
+from gps import aggregator
+from gps.registry import get_aggregator
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
@@ -287,8 +289,8 @@ class SubgraphSamplingGNNClassifier(nn.Module):
                  mlp_layers: int = 2,
                  dropout: float = 0.1,
                  conv_type: str = 'gine',
-                 graph_level_pooling: str = 'mean',
-                 subgraph_level_pooling: str = 'mean'):
+                 aggregator: str = 'mean',
+                 pooling: str = 'mean'):
                  
         super().__init__()
 
@@ -301,25 +303,11 @@ class SubgraphSamplingGNNClassifier(nn.Module):
                                           conv_type=conv_type,
                                           mlp_layers=mlp_layers,
                                           dropout=dropout,
-                                          pooling=subgraph_level_pooling)
+                                          pooling=pooling)
 
         # set aggregator
-        if graph_level_pooling == "mean":
-            self.aggregator = global_mean_pool
-        elif graph_level_pooling in ["add", "sum"]:
-            self.aggregator = global_add_pool
-        elif graph_level_pooling == "max":
-            self.aggregator = global_max_pool
-        else:
-            raise ValueError(f"unknown pooling type:{graph_level_pooling}")
+        self.aggregator = get_aggregator(aggregator)(hidden_dim)
 
-        # Head
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(hidden_dim, num_classes)
-        )
 
     # ---------- FORWARD ----------
     def forward(self, batch: SubgraphFeaturesBatch):
