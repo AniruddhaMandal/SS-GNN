@@ -1,12 +1,12 @@
 {
-  "name": "Baseline: ZINC VANILLA GCN",
+  "name": "Baseline: ZINC VANILLA GINE",
   "dataset_name": "ZINC",
   "task": "Regression",
 
   "model_name": "VANILLA",
   "model_config": {
     "name": "vanilla",
-    "mpnn_type": "gcn",
+    "mpnn_type": "gine",
     "node_feature_dim": 28,         
     "edge_feature_dim": 4,          
     "hidden_dim": 64,               
@@ -17,7 +17,7 @@
   },
 
   "train": {
-    "epochs": 300,
+    "epochs": 3,
     "train_batch_size": 128,
     "val_batch_size": 128,
     "lr": 0.001,

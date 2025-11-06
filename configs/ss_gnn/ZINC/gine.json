@@ -1,23 +1,29 @@
 {
-  "name": "Baseline: ZINC VANILLA GCN",
+  "name": "SS-GNN: ZINC VANILLA GINE",
   "dataset_name": "ZINC",
   "task": "Regression",
 
   "model_name": "VANILLA",
   "model_config": {
     "name": "vanilla",
-    "mpnn_type": "gcn",
+    "mpnn_type": "gine",
     "node_feature_dim": 28,         
     "edge_feature_dim": 4,          
     "hidden_dim": 64,               
     "mpnn_layers": 4,
     "dropout": 0.0,
     "out_dim": 1,
-    "pooling": "sum"
+    "pooling": "sum",
+    "subgraph_sampling": true,
+    "subgraph_param": {
+      "k": 4,
+      "m": 500,
+      "pooling": "mean"
+    }
   },
 
   "train": {
-    "epochs": 300,
+    "epochs": 150,
     "train_batch_size": 128,
     "val_batch_size": 128,
     "lr": 0.001,
