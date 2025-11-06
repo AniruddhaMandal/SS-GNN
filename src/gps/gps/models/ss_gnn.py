@@ -306,7 +306,7 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         # set aggregator
         if graph_level_pooling == "mean":
             self.aggregator = global_mean_pool
-        elif graph_level_pooling == "add":
+        elif graph_level_pooling in ["add", "sum"]:
             self.aggregator = global_add_pool
         elif graph_level_pooling == "max":
             self.aggregator = global_max_pool

@@ -27,10 +27,9 @@ SUMMARY_LOG="${LOG_DIR}/summary.txt"
 
 # List of config files to run
 CONFIGS=(
-    "configs/vanilla/LRGB/PCQM-Contact/gcn-pcqm-contact.json"
-    "configs/vanilla/LRGB/PCQM-Contact/gine-pcqm-contact.json"
-    "configs/vanilla/TUData/gcn-collab.json"
     # Add more config files here
+    "configs/vanilla/ZINC/gine.json"
+    "configs/ss_gnn/ZINC/gine.json"
 )
 
 # Initialize counters
