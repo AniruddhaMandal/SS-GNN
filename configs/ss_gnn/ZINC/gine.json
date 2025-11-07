@@ -18,7 +18,7 @@
     "subgraph_sampling": true,
     "subgraph_param": {
       "k": 8,
-      "m": 200,
+      "m": 100,
       "pooling": "sum"
     }
   },
