@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #######################################
-# GNN Experiment Runner
+# GNN Experiment Runner with Overrides
 # Usage: ./run_experiments.sh
 #######################################
 
@@ -16,6 +16,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Create directories
@@ -25,15 +26,23 @@ mkdir -p "${RESULTS_DIR}"
 # Log file for summary
 SUMMARY_LOG="${LOG_DIR}/summary.txt"
 
-# List of config files to run
-CONFIGS=(
-    # Add more config files here
-    "configs/vanilla/ZINC/gine.json"
-    "configs/ss_gnn/ZINC/gine.json"
+# Define experiments with config and optional overrides
+# Format: "config_path|override1 override2 override3|experiment_name"
+# If no overrides needed, use: "config_path||experiment_name"
+EXPERIMENTS=(
+    # Examples:
+    "configs/ss_gnn/TUData/gin-proteins.json|model_config.dropout=0.4"
+    "configs/ss_gnn/TUData/gin-proteins.json|model_config.temperature=5.0"
+    "configs/ss_gnn/TUData/gin-proteins.json|model_config.temperature=0.1"
+    "configs/ss_gnn/TUData/gin-proteins.json|model_config.subgraph_param.k=12 model_config.subgraph_param.m=50"
+    "configs/ss_gnn/TUData/gin-proteins.json|model_config.subgraph_param.k=6"
+    
+    # Multi-seed examples (add more as needed):
+    # "configs/vanilla/ZINC/gine.json|--multi-seed --seeds 42 123 456|vanilla_gine_multiseed"
 )
 
 # Initialize counters
-total_experiments=${#CONFIGS[@]}
+total_experiments=${#EXPERIMENTS[@]}
 completed=0
 failed=0
 start_time=$(date +%s)
@@ -53,6 +62,17 @@ send_notification() {
     fi
 }
 
+# Function to parse experiment definition
+parse_experiment() {
+    local exp_def="$1"
+    IFS='|' read -r config overrides exp_name <<< "$exp_def"
+    
+    # Return values via global variables
+    EXP_CONFIG="$config"
+    EXP_OVERRIDES="$overrides"
+    EXP_NAME="${exp_name:-$(basename "$config" .json)}"
+}
+
 # Print header
 echo "=========================================" | tee "${SUMMARY_LOG}"
 echo "GNN Experiment Runner" | tee -a "${SUMMARY_LOG}"
@@ -62,14 +82,25 @@ echo "=========================================" | tee -a "${SUMMARY_LOG}"
 echo "" | tee -a "${SUMMARY_LOG}"
 
 # Main experiment loop
-for i in "${!CONFIGS[@]}"; do
-    config="${CONFIGS[$i]}"
+for i in "${!EXPERIMENTS[@]}"; do
+    experiment="${EXPERIMENTS[$i]}"
     exp_num=$((i + 1))
-    exp_name=$(basename "$config" .json)
+    
+    # Parse experiment definition
+    parse_experiment "$experiment"
+    config="$EXP_CONFIG"
+    overrides="$EXP_OVERRIDES"
+    exp_name="$EXP_NAME"
     
     echo -e "${BLUE}[${exp_num}/${total_experiments}] Starting: ${exp_name}${NC}"
     echo "[${exp_num}/${total_experiments}] Starting: ${exp_name}" >> "${SUMMARY_LOG}"
     echo "  Config: ${config}" | tee -a "${SUMMARY_LOG}"
+    
+    # Display overrides if present
+    if [ -n "$overrides" ]; then
+        echo -e "  ${CYAN}Overrides: ${overrides}${NC}" | tee -a "${SUMMARY_LOG}"
+    fi
+    
     echo "  Time: $(date)" | tee -a "${SUMMARY_LOG}"
     
     # Check if config file exists
@@ -80,17 +111,35 @@ for i in "${!CONFIGS[@]}"; do
         continue
     fi
     
+    # Build command
+    cmd="gps-run -c \"$config\""
+    
+    # Add overrides if present
+    if [ -n "$overrides" ]; then
+        # Check if overrides contain multi-seed flags
+        if [[ "$overrides" == *"--multi-seed"* ]] || [[ "$overrides" == *"-m"* ]]; then
+            # Multi-seed case: append overrides as-is
+            cmd="$cmd $overrides"
+        else
+            # Regular overrides: use -o flag
+            cmd="$cmd -o $overrides"
+        fi
+    fi
+    
     # Run experiment
     exp_start=$(date +%s)
     log_file="${LOG_DIR}/${exp_name}.log"
     
+    # Execute command and capture output
+    echo "  Command: $cmd" | tee -a "${SUMMARY_LOG}"
+    
     # Option 1: Filter progress bar lines (recommended)
-    gps-run -c "$config" 2>&1 | grep -v -e "^[[:space:]]*[0-9]*%|" -e "it/s" -e "s/it" > "$log_file"
+    eval "$cmd" 2>&1 | grep -v -e "^[[:space:]]*[0-9]*%|" -e "it/s" -e "s/it" > "$log_file"
     exit_code=${PIPESTATUS[0]}
     
     # Option 2: Use unbuffer to get clean output (uncomment if Option 1 doesn't work)
     # Requires: sudo apt install expect-dev
-    # unbuffer gps-run -c "$config" 2>&1 | tee "$log_file" | grep --line-buffered -v -e "^[[:space:]]*[0-9]*%|" -e "it/s" > /dev/null
+    # eval "unbuffer $cmd" 2>&1 | tee "$log_file" | grep --line-buffered -v -e "^[[:space:]]*[0-9]*%|" -e "it/s" > /dev/null
     # exit_code=${PIPESTATUS[0]}
     
     exp_end=$(date +%s)

@@ -29,6 +29,7 @@ def SSGNN(cfg: ExperimentConfig):
                                           dropout=cfg.model_config.dropout,
                                           conv_type=cfg.model_config.mpnn_type,
                                           aggregator=cfg.model_config.pooling,
+                                          temperature=cfg.model_config.temperature,
                                           pooling=cfg.model_config.subgraph_param.pooling)
 
     return model

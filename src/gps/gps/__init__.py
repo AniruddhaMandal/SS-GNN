@@ -39,16 +39,17 @@ class SchedulerCfg:
 
 @dataclass
 class ModelConfig:
+    mpnn_type: MpnnType = "gcn"
+    mpnn_layers: Optional[int] = None
     node_feature_dim: Optional[int] = None
     edge_feature_dim: Optional[int] = None
     hidden_dim: Optional[int] = None
     out_dim: Optional[int] = None
-    mpnn_layers: Optional[int] = None
     dropout: Optional[float] = None
     pooling: Optional[PoolingType] = None
+    temperature: Optional[float] = None
     subgraph_sampling: bool = False
     subgraph_param: SubgraphParam = field(default_factory=SubgraphParam)
-    mpnn_type: MpnnType = "gcn"
     # Extra user-defined knobs
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
@@ -117,6 +118,8 @@ class ExperimentConfig:
             ('aggregation', self.model_config.pooling),
             ('k', self.model_config.subgraph_param.k),
             ('m', self.model_config.subgraph_param.m),
+            ('temperature', self.model_config.temperature),
+            ('dropout', self.model_config.dropout)
         ]
         return dict(items)
 

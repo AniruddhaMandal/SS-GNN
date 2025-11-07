@@ -290,6 +290,7 @@ class SubgraphSamplingGNNClassifier(nn.Module):
                  dropout: float = 0.1,
                  conv_type: str = 'gine',
                  aggregator: str = 'mean',
+                 temperature: float = 0.5,
                  pooling: str = 'mean'):
                  
         super().__init__()
@@ -307,7 +308,8 @@ class SubgraphSamplingGNNClassifier(nn.Module):
 
         # set aggregator
         try:
-            self.aggregator = get_aggregator(aggregator)(hidden_dim)
+            self.aggregator = get_aggregator(aggregator)\
+                (hidden_dim=hidden_dim,temperature=temperature)
         except:
             if aggregator in ['sum','add']:
                 self.aggregator = global_add_pool
@@ -367,7 +369,10 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         global_x = x[stacked_nodes]
 
         # gather global edge atrribute
-        global_edge_attr = edge_attr[edge_src_global_t]
+        if edge_attr:
+            global_edge_attr = edge_attr[edge_src_global_t]
+        else:
+            global_edge_attr = None
 
         # convert edge index to batch(subgraph) level
         global_edge_index = torch.repeat_interleave(torch.arange(0,num_subgraphs,device=device),edge_ptr_t[1:]-edge_ptr_t[:-1])*k
