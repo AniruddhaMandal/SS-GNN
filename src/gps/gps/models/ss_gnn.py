@@ -306,7 +306,15 @@ class SubgraphSamplingGNNClassifier(nn.Module):
                                           pooling=pooling)
 
         # set aggregator
-        self.aggregator = get_aggregator(aggregator)(hidden_dim)
+        try:
+            self.aggregator = get_aggregator(aggregator)(hidden_dim)
+        except:
+            if aggregator in ['sum','add']:
+                self.aggregator = global_add_pool
+            if aggregator == 'mean':
+                self.aggregator = global_mean_pool
+            if aggregator == 'max':
+                self.aggregator = global_max_pool
 
 
     # ---------- FORWARD ----------

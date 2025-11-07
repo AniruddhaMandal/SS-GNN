@@ -6,7 +6,7 @@ from .registry import register_aggregator
 
 @register_aggregator('attention')
 class AttentionAggregator(nn.Module):
-    def __init__(self, hidden_dim, temperature=2.0):
+    def __init__(self, hidden_dim, temperature=0.2):
         super().__init__()
         self.temperature = temperature
         self.attention_mlp = nn.Sequential(

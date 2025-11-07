@@ -37,7 +37,7 @@
   "seed": 42,
   "num_workers": 4,
 
-  "log_dir": "logs",
+  "log_dir": "logs/ZINC/",
   "checkpoint_dir": "checkpoints",
   "cache_dir": "cache",
 
