@@ -41,21 +41,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from gps.wandb_writer import WandBWriter
 import ugs_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
 from dataclasses import asdict
 
-# ------- VSCode Debug
-
+# ------- VSCode Debug ------
 def running_in_vscode_debug():
     trace = sys.gettrace()
     return (
         (trace is not None and "debugpy" in str(trace))
         or "debugpy" in sys.modules
     )
-
 if running_in_vscode_debug():
     warnings.simplefilter("error", UserWarning)
 
@@ -110,8 +109,12 @@ class Experiment:
 
         # logging
         self.logger = self._setup_logger()
-        self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
-        self.writer.add_hparams(self.cfg.parameter_dict(),{})
+        try:
+            self.writer = WandBWriter(cfg)
+        except ImportError:
+            self.logger.info('WandB: supports wandb, `pip install wandb` and login to use.')
+            self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
+            self.writer.add_hparams(self.cfg.parameter_dict(),{})
 
         # deterministic
         self._set_seed(cfg.seed)

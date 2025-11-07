@@ -1,14 +1,14 @@
 {
-  "name": "Baseline: PROTEINS VANILLA GCN",
+  "name": "Baseline: PROTEINS VANILLA GIN",
   "dataset_name": "PROTEINS",
   "model_name": "VANILLA",
   "task": "Binary-Classification",
 
   "model_config": {
     "name": "vanilla",
-    "mpnn_type": "gcn",
+    "mpnn_type": "gin",
     "node_feature_dim": 3,
-    "hidden_dim": 256,
+    "hidden_dim": 128,
     "mpnn_layers": 5,
     "dropout": 0.2,
     "out_dim": 2,

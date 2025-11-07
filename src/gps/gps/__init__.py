@@ -110,6 +110,8 @@ class ExperimentConfig:
     def parameter_dict(self) -> dict:
         """Add params for TensorBoard hparams."""
         items =[ 
+            ('dataset', self.dataset_name),
+            ('model_name', self.model_name),
             ('hidden_dim', self.model_config.hidden_dim),
             ('layers', self.model_config.mpnn_layers),
             ('aggregation', self.model_config.pooling),
