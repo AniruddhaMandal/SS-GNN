@@ -40,7 +40,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from gps.wandb_writer import WandBWriter
 import ugs_sampler
 from tqdm.auto import tqdm
@@ -113,8 +112,13 @@ class Experiment:
             self.writer = WandBWriter(cfg)
         except ImportError:
             self.logger.info('WandB: supports wandb, `pip install wandb` and login to use.')
-            self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
-            self.writer.add_hparams(self.cfg.parameter_dict(),{})
+            try: 
+                from torch.utils.tensorboard import SummaryWriter
+                self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
+                self.writer.add_hparams(self.cfg.parameter_dict(),{})
+            except ImportError:
+                self.logger.error('Install Tensorboard or WandB.')
+                os._exit(-1)
 
         # deterministic
         self._set_seed(cfg.seed)

@@ -54,8 +54,13 @@ virtualenv -p python3.12 venv
 source venv/bin/activate
 
 # Python packages
-pip install pytest numpy torch torch_sparse torch_geometric scikit-learn tensorboard
-pip install torch-sparse -f https://data.pyg.org/whl/torch-{torch.__version__}+${CUDA}.html --no-cache-dir
+pip install pytest numpy torch torch_geometric scikit-learn tensorboard
+
+# [Optional] Python packages
+pip install torch-sparse torch-scatter --no-build-isolation -f https://data.pyg.org/whl/torch-{torch.__version__}+${CUDA}.html
+
+# [Optional] WandB (Use Tensorboard otherwise)
+pip install WandB
 
 # Build and install subgraph sampler
 pip install -e src/ugs_sampler --no-build-isolation
