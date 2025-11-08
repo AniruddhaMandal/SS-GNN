@@ -14,3 +14,4 @@ logs/
 cache/
 experiment_results/
 experiment_logs/
+wandb/

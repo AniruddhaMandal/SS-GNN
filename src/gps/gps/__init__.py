@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, asdict
 from typing import Any, Callable, Dict, Optional, Tuple, Literal, Mapping
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+
+import wandb
 
 # ----- Type aliases -----
 PoolingType = Literal["mean", "max", "add", "sum", "off"]
@@ -123,6 +125,31 @@ class ExperimentConfig:
         ]
         return dict(items)
 
+    @classmethod
+    def from_sweep(cls, base_config: Optional['ExperimentConfig'] = None):
+        """Handle flat dot-notation parameters"""
+        try: 
+            import wandb
+        except ImportError:
+            raise ImportError('install `wandb` to use `from_sweep`.')
+
+        config = base_config if base_config is not None else cls()
+        sweep_params = dict(wandb.config)
+    
+        for key, value in sweep_params.items():
+            if '.' in key:
+                # Handle nested parameter like 'model_config.hidden_dim'
+                parts = key.split('.')
+                obj = config
+                for part in parts[:-1]:
+                    obj = getattr(obj, part)
+                setattr(obj, parts[-1], value)
+            else:
+                # Handle top-level parameter
+                if hasattr(config, key):
+                    setattr(config, key, value)
+    
+        return config
 
 # ----- Subgraph Batch Features ------
 

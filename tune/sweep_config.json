@@ -1,0 +1,33 @@
+{
+    "method": "bayes",
+    "metric": 
+    {
+        "name": "val_metric", 
+        "goal": "maximize"
+    },
+    "parameters": {
+        "model_config.hidden_dim": {
+            "values": [64, 128, 256]
+        },
+        "model_config.mpnn_layers": {
+            "values": [3, 4, 5, 6]
+        },
+        "model_config.dropout":{
+            "min": 0.1, 
+            "max":0.7
+        },
+        "temperature": {
+            "min": 0.1, 
+            "max": 10.0
+        },
+        "model_config.subgraph_param.k": {
+            "values": [6, 8, 10]
+        },
+        "model_config.subgraph_param.m": {
+            "values": [50, 100, 200]
+        },
+        "model_config.subgraph_param.pooling": {
+            "values": ["sum", "mean", "max"]
+        }
+    }
+}
