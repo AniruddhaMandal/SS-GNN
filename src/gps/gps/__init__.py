@@ -115,13 +115,13 @@ class ExperimentConfig:
         items =[ 
             ('dataset', self.dataset_name),
             ('model_name', self.model_name),
-            ('hidden_dim', self.model_config.hidden_dim),
-            ('layers', self.model_config.mpnn_layers),
-            ('aggregation', self.model_config.pooling),
-            ('k', self.model_config.subgraph_param.k),
-            ('m', self.model_config.subgraph_param.m),
-            ('temperature', self.model_config.temperature),
-            ('dropout', self.model_config.dropout)
+            ('model_config.hidden_dim', self.model_config.hidden_dim),
+            ('model_config.layers', self.model_config.mpnn_layers),
+            ('model_config.pooling', self.model_config.pooling),
+            ('model_config.subgraph_param.k', self.model_config.subgraph_param.k),
+            ('model_config.subgraph_param.m', self.model_config.subgraph_param.m),
+            ('model_config.temperature', self.model_config.temperature),
+            ('model_config.dropout', self.model_config.dropout)
         ]
         return dict(items)
 

@@ -9,14 +9,14 @@
     "mpnn_type": "gin",
     "node_feature_dim": 3,
     "hidden_dim": 64,
-    "mpnn_layers": 3,
+    "mpnn_layers": 4,
     "dropout": 0.6,
     "out_dim": 2,
     "pooling": "mean"
   },
 
   "train": {
-    "epochs": 300,
+    "epochs": 150,
     "train_batch_size": 32,
     "val_batch_size": 32,
     "train_ratio": 0.7,

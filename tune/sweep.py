@@ -37,7 +37,7 @@ def train_for_sweep(cfg: ExperimentConfig):
     test_results = experiment.train()
     
     # Log final results
-    wandb.log({'val_metric': test_results['val_metric']})
+    wandb.log(test_results)
     
     run.finish()
     return test_results
@@ -46,8 +46,9 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='Run hyperparameter sweep')
-    parser.add_argument('--project', type=str, default='SS-GNN',
+    parser.add_argument('--project', type=str, default='SS-GNN-Tune',
                         help='W&B project name')
+    parser.add_argument('--entity', type=str, help='W&B entity name')
     parser.add_argument('--count', type=int, default=50,
                         help='Number of sweep runs')
     parser.add_argument('--sweep-id', type=str, default=None,
@@ -67,4 +68,9 @@ if __name__ == '__main__':
     else:
         sweep_id = spawn_sweep(project_name=args.project) # spawn new sweep
 
-    wandb.agent(sweep_id, function=train_fn, count=args.count)
+    wandb.agent(
+        sweep_id, 
+        function=train_fn, 
+        count=args.count, 
+        entity=args.entity, 
+        project=args.project)

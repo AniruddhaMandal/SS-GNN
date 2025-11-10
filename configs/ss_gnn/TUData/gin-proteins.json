@@ -1,5 +1,5 @@
 {
-  "name": "SS-GNN: PROTEINS VANILLA GIN",
+  "name": "SS-GNN: PROTEINS SS GIN",
   "dataset_name": "PROTEINS",
   "model_name": "SS-GNN",
   "task": "Binary-Classification",
