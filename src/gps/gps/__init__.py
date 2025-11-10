@@ -103,8 +103,9 @@ class ExperimentConfig:
     keep_last_k: int = 3
     cache_dir: Optional[str] = None
     resume_from: Optional[str] = None
+    tracker: Optional[str] = "True" # set "False" to turn W&B or Tensorboard off
 
-    # Derived/callables (set after parsing)
+    # Derived/callables 
     model_fn: Optional[ModelFactory] = None
     dataloader_fn: Optional[DataloaderFactory] = None
     criterion_fn: Optional[CriterionFactory] = None

@@ -42,3 +42,25 @@ class WandBWriter:
 
     def close(self):
         wandb.finish()
+
+class DummyWriter:
+    def __init__(self):
+        pass
+
+    def add_scalar(self, tag, value, step=None):
+        pass
+
+    def add_text(self, tag, text, step=None):
+        pass
+
+    def add_histogram(self, tag, values, step=None):
+        pass
+
+    def add_image(self, tag, img, step=None):
+        pass
+
+    def watch(self, model, log="all", log_freq=200):
+        pass
+
+    def close(self):
+        pass

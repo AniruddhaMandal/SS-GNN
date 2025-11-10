@@ -40,7 +40,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from gps.wandb_writer import WandBWriter
 import ugs_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
@@ -108,17 +107,6 @@ class Experiment:
 
         # logging
         self.logger = self._setup_logger()
-        try:
-            self.writer = WandBWriter(cfg)
-        except ImportError:
-            self.logger.info('WandB: supports wandb, `pip install wandb` and login to use.')
-            try: 
-                from torch.utils.tensorboard import SummaryWriter
-                self.writer = SummaryWriter(log_dir=os.path.join(cfg.log_dir, cfg.name))
-                self.writer.add_hparams(self.cfg.parameter_dict(),{})
-            except ImportError:
-                self.logger.error('Install Tensorboard or WandB.')
-                os._exit(-1)
 
         # deterministic
         self._set_seed(cfg.seed)
@@ -162,6 +150,23 @@ class Experiment:
         ch.setFormatter(fmt)
         if not logger.handlers:
             logger.addHandler(ch)
+
+        from gps.wandb_writer import WandBWriter, DummyWriter
+        if self.cfg.tracker == 'False':
+            self.writer = DummyWriter()
+            return logger
+        # if tracker is on initiate W&B or Tensorboard
+        try:
+            self.writer = WandBWriter(self.cfg)
+        except ImportError:
+            self.logger.info('WandB: supports wandb, `pip install wandb` and login to use.')
+            try: 
+                from torch.utils.tensorboard import SummaryWriter
+                self.writer = SummaryWriter(log_dir=os.path.join(self.cfg.log_dir, self.cfg.name))
+                self.writer.add_hparams(self.cfg.parameter_dict(),{})
+            except ImportError:
+                self.logger.error('Install Tensorboard or WandB.')
+                os._exit(-1)
         return logger
 
     def log_config(self):

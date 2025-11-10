@@ -17,7 +17,7 @@
 - [] Add support for multiple metric
 - [] Add QM9
 - [] WandB
-    - [] cli to turn off. 
+    - [x] cli to turn off. 
     - [] resolve entity name 
     - [] wandb projcet arg for main.py 
     - [] parameter names in wandb
