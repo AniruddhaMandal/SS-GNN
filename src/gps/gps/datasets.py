@@ -61,3 +61,22 @@ def build_zinc(cfg: ExperimentConfig):
                         pre_transform=transforms)
     dataset = (train_dataset, test_dataset, val_dataset)
     return build_dataloaders_from_dataset(dataset, cfg)
+
+@register_dataset('QM9')
+def build_qm9(cfg: ExperimentConfig):
+    from torch_geometric.datasets import QM9
+    from sklearn.model_selection import train_test_split
+    from .encoder import FilterTarget
+    from .encoder import NormaliseTarget
+    
+
+    if cfg.task == 'Single-Target-Regression':
+        if cfg.train.dataloader_kwargs.get('target_idx', None) is None:
+            raise NameError(f'set target_idx in config.')
+        target_idx = int(cfg.train.dataloader_kwargs.get('target_idx'))
+        transforms = FilterTarget(target_idx)
+    dataset = QM9('./data/QM9',transform=transforms)
+    if cfg.task == "All-Target-Regression":
+        transforms = None
+        
+    return build_dataloaders_from_dataset(dataset, cfg)

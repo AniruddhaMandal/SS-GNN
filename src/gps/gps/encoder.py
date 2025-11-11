@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 class AtomBondEncoder:
@@ -35,3 +36,58 @@ class AtomBondEncoder:
                 raise ValueError(f"bond type too small, max {int(ea.max())}>={self.bond_encoder.num_embeddings}")
             data.edge_attr = self.bond_encoder(ea)
         return data
+
+class FilterTarget:
+    def __init__(self, target_idx):
+        self.target_idx = target_idx
+
+    def __call__(self, data):
+        data.y = data.y[:,self.target_idx]
+        return data
+
+
+class NormaliseTarget:
+    """Normalizes targets based on training statistics
+
+    This wrapper class normalizes targets using pre-computed or computed mean/std.
+    Designed to be used after train/val/test split to avoid data leakage.
+    """
+    def __init__(self, dataset, mean=None, std=None, target_attr='y'):
+        """
+        Args:
+            dataset: Dataset to wrap
+            mean: Pre-computed mean (if None, compute from dataset)
+            std: Pre-computed std (if None, compute from dataset)
+            target_attr: Attribute name for targets (default: 'y')
+        """
+        self.dataset = dataset
+        self.target_attr = target_attr
+
+        if mean is None or std is None:
+            # Compute stats from this dataset
+            targets = []
+            for i in range(len(dataset)):
+                data = dataset[i]
+                y = getattr(data, target_attr)
+                targets.append(y)
+            targets = torch.stack(targets)
+            self.mean = targets.mean(dim=0, keepdim=True)
+            self.std = targets.std(dim=0, keepdim=True)
+        else:
+            self.mean = mean
+            self.std = std
+
+    def __getitem__(self, idx):
+        data = self.dataset[idx]
+        y = getattr(data, self.target_attr)
+        # Normalize
+        normalized_y = (y - self.mean) / (self.std + 1e-8)
+        setattr(data, self.target_attr, normalized_y)
+        return data
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def get_stats(self):
+        """Return normalization statistics for potential denormalization"""
+        return self.mean, self.std

@@ -66,6 +66,8 @@ class TrainConfig:
     weight_decay: float = 0.0
     optimizer: OptimizerType = "adam"  # "adam" | "adamw" | "sgd"
     scheduler: Optional[SchedulerCfg] = field(default_factory=SchedulerCfg)  
+    train_ratio: float = 0.8
+    val_ratio: float = 0.1
 
     # Objective / metrics
     metric: Optional[str] = None

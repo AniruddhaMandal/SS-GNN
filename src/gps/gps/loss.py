@@ -20,3 +20,8 @@ def build_crs_entpy():
 def build_l1loss():
     from torch.nn import L1Loss 
     return L1Loss()
+
+@register_loss("MSELoss")
+def build_mseloss():
+    from torch.nn import MSELoss
+    return MSELoss()

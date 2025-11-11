@@ -170,16 +170,27 @@ class Experiment:
         return logger
 
     def log_config(self):
-        # Convert dataclass (including nested dataclasses) to dict
-        cfg_dict = asdict(self.cfg)
-
-        # Optional: filter out callables to avoid printing garbage
-        filtered_cfg = {
-            k: v for k, v in cfg_dict.items()
-            if not callable(v)
+        # Only log selected config sections, not everything
+        key_params = {
+            "experiment": self.cfg.name,
+            "dataset": self.cfg.dataset_name,
+            "task": self.cfg.task,
+            "device": self.cfg.device,
+            "seed": self.cfg.seed,
+            "training": {
+                "epochs": self.cfg.train.epochs,
+                "batch_size": f"train={self.cfg.train.train_batch_size}, val={self.cfg.train.val_batch_size}",
+                "lr": self.cfg.train.lr,
+                "optimizer": self.cfg.train.optimizer,
+                "weight_decay": self.cfg.train.weight_decay,
+            }
         }
 
-        pretty = json.dumps(filtered_cfg, indent=4)
+        # Add scheduler info if available
+        if hasattr(self.cfg.train, 'scheduler') and self.cfg.train.scheduler:
+            key_params["training"]["scheduler"] = self.cfg.train.scheduler.type
+
+        pretty = json.dumps(key_params, indent=2)
         self.logger.info("=== Experiment Configuration ===")
         self.logger.info(pretty)
 
@@ -194,44 +205,68 @@ class Experiment:
 
     # ---------- Build components (override or supply fns) ----------
     def build(self):
+        self.logger.info("=" * 60)
         self.logger.info("Building experiment components...")
+        self.logger.info("=" * 60)
+
         # model
+        self.logger.info("→ Building model...")
         if callable(self.cfg.model_fn):
             self.model = self.cfg.model_fn(self.cfg)
         else:
             raise NotImplementedError("Provide cfg.model_fn(cfg) returning an nn.Module")
         self.model.to(self.device)
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        self.logger.info(f"  ✓ Model built: {total_params:,} params ({trainable_params:,} trainable)")
 
         # criterion
+        self.logger.info("→ Building loss criterion...")
         if callable(self.cfg.criterion_fn):
             self.criterion = self.cfg.criterion_fn()
+            self.logger.info(f"  ✓ Criterion: {self.criterion.__class__.__name__}")
 
         # dataloaders
+        self.logger.info("→ Building dataloaders (this may take a while)...")
         if callable(self.cfg.dataloader_fn):
             loaders = self.cfg.dataloader_fn(self.cfg)
             if isinstance(loaders, tuple) and (2 <= len(loaders) <= 3):
                 self.train_loader, self.val_loader = loaders[0], loaders[1]
                 self.test_loader = loaders[2] if len(loaders) == 3 else None
+                self.logger.info(f"  ✓ Train: {len(self.train_loader)} batches | Val: {len(self.val_loader)} batches" +
+                               (f" | Test: {len(self.test_loader)} batches" if self.test_loader else ""))
             else:
                 raise ValueError("dataloader_fn must return (train_loader, val_loader, [test_loader])")
         else:
             raise NotImplementedError("Provide cfg.dataloader_fn(cfg) returning dataloaders")
 
         # optimizer
+        self.logger.info("→ Building optimizer...")
         self.optimizer = self._build_optimizer()
+        self.logger.info(f"  ✓ Optimizer: {self.optimizer.__class__.__name__} (lr={self.cfg.train.lr})")
 
         # scheduler (optional)
+        self.logger.info("→ Building scheduler...")
         self.scheduler = self._build_scheduler()
+        if self.scheduler:
+            self.logger.info(f"  ✓ Scheduler: {self.scheduler.__class__.__name__}")
+        else:
+            self.logger.info("  ✓ No scheduler")
 
         # AMP scaler
         if self.cfg.train.use_amp:
+            self.logger.info("→ Enabling mixed precision training...")
             self.scaler = torch.cuda.amp.GradScaler(enabled=True)
+            self.logger.info("  ✓ AMP enabled")
 
         # optionally resume
         if self.cfg.resume_from:
+            self.logger.info(f"→ Resuming from checkpoint: {self.cfg.resume_from}")
             self.load_checkpoint(self.cfg.resume_from)
 
-        self.logger.info("Build complete")
+        self.logger.info("=" * 60)
+        self.logger.info("✓ Build complete - Ready to train!")
+        self.logger.info("=" * 60)
 
     def _build_optimizer(self):
         params = [p for p in self.model.parameters() if p.requires_grad]
@@ -343,6 +378,8 @@ class Experiment:
                     loss = self.criterion(output, labels)
                 elif self.cfg.task == "Regression":
                     loss = self.criterion(output, labels.unsqueeze(-1))
+                elif self.cfg.task == "Single-Target-Regression":
+                    loss = self.criterion(output, labels.float())
 
                 else:
                     raise ValueError(f"unknown task: {self.cfg.task}")
@@ -413,6 +450,8 @@ class Experiment:
                         loss = self.criterion(output, labels)
                     if self.cfg.task == "Regression":
                         loss = self.criterion(output, labels.unsqueeze(-1))
+                    if self.cfg.task == "Single-Target-Regression":
+                        loss = self.criterion(output, labels.float())
 
 
                 # collect logits and targets
@@ -457,6 +496,8 @@ class Experiment:
                     metrics = self.cfg.metric_fn(all_logits, 
                                                  all_targets, 
                                                  all_edge_label_index)
+                if self.cfg.task == "Single-Target-Regression":
+                    metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.numpy())
                 
             except Exception as e:
                 self.logger.warning("metric_fn failed: %s", e)

@@ -1,5 +1,5 @@
 {
-  "name": "SS-GNN: ZINC VANILLA GCN",
+  "name": "SS-GNN: ZINC GCN",
   "dataset_name": "ZINC",
   "model_name": "SS-GNN",
   "task": "Regression",

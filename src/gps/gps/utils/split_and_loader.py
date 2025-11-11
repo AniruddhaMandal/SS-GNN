@@ -7,8 +7,11 @@ import torch
 from torch_geometric.loader import DataLoader
 from sklearn.model_selection import train_test_split
 from collections.abc import Mapping, Sequence
+import logging
 
 from .. import ExperimentConfig
+
+logger = logging.getLogger(__name__)
 
 
 # ---------- tiny I/O helpers ----------
@@ -81,8 +84,8 @@ def build_or_load_splits(dataset, cfg: ExperimentConfig) -> Dict[str, list]:
         strat = None
 
     # ratios
-    train_ratio = float(getattr(getattr(cfg, "train", cfg), "train_ratio", 0.8))
-    val_ratio   = float(getattr(getattr(cfg, "train", cfg), "val_ratio", 0.1))
+    train_ratio = float(cfg.train.train_ratio)
+    val_ratio   = float(cfg.train.val_ratio)
     test_ratio  = 1.0 - train_ratio - val_ratio
     if test_ratio <= 0:
         raise ValueError("train_ratio + val_ratio must be < 1.0")
@@ -162,6 +165,24 @@ def build_dataloaders_from_dataset(dataset_or_splits, cfg: ExperimentConfig, col
             train_ds = torch.utils.data.Subset(dataset, spl["train"])
             val_ds   = torch.utils.data.Subset(dataset, spl["val"])
             test_ds  = torch.utils.data.Subset(dataset, spl["test"])
+
+    # normalize target if necessary
+    try:
+        normalize_targets = cfg.train.dataloader_kwargs.get("normalize_target", False)
+    except (AttributeError, TypeError):
+        normalize_targets = False
+
+    if normalize_targets:
+        logger.info("  → Normalizing targets...")
+        from gps.encoder import NormaliseTarget
+        # Compute stats from training data
+        normalizer_train = NormaliseTarget(train_ds)
+        mean, std = normalizer_train.get_stats()
+
+        # Apply same stats to all splits
+        train_ds = normalizer_train  # Already computed
+        val_ds = NormaliseTarget(val_ds, mean=mean, std=std)
+        test_ds = NormaliseTarget(test_ds, mean=mean, std=std)
 
     # 3) DataLoaders
     nw = int(getattr(cfg, "num_workers", 0))
