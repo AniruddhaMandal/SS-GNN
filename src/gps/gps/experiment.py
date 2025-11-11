@@ -504,7 +504,7 @@ class Experiment:
                 exit()
         metric_val = metrics.get(self.cfg.train.metric)
 
-        # tensorboard
+        # tracker logging
         if epoch is not None:
             self.writer.add_scalar('val/loss', avg_loss, epoch)
             if metric_val is not None:

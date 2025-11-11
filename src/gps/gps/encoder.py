@@ -42,7 +42,7 @@ class FilterTarget:
         self.target_idx = target_idx
 
     def __call__(self, data):
-        data.y = data.y[:,self.target_idx]
+        data.y = data.y[:,self.target_idx:self.target_idx+1]  # Keep dimension [N, 1]
         return data
 
 
@@ -71,8 +71,8 @@ class NormaliseTarget:
                 y = getattr(data, target_attr)
                 targets.append(y)
             targets = torch.stack(targets)
-            self.mean = targets.mean(dim=0, keepdim=True)
-            self.std = targets.std(dim=0, keepdim=True)
+            self.mean = targets.mean(dim=0)
+            self.std = targets.std(dim=0)
         else:
             self.mean = mean
             self.std = std
