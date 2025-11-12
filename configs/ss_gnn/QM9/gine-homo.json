@@ -17,7 +17,7 @@
     "temperature": 0.5,
     "subgraph_sampling": true,
     "subgraph_param": {
-      "k": 8,
+      "k": 5,
       "m": 50,
       "pooling": "sum"
     }

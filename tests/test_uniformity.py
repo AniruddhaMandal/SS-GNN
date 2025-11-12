@@ -40,7 +40,7 @@ print("=" * 60)
 # Load a real graph from QM9 or use synthetic
 if HAS_QM9:
     print("\nLoading QM9 dataset...")
-    dataset = QM9(root='/tmp/QM9')
+    dataset = QM9(root='./data/QM9')
 
     # Pick a medium-sized molecule (not too small, not too large)
     graph_idx = 100
