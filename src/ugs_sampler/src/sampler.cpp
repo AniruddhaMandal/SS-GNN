@@ -7,16 +7,19 @@
 #include <random>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <chrono>
 #include <algorithm> // for std::find
+#include <string>
+#include <cstdlib>
 
 #include "sampler.hpp"
 
 namespace py = pybind11;
 using i64 = int64_t;
 
-// --- Rand-Grow helper (trimmed; unchanged logic) ---
+// --- Rand-Grow helper (fixed: no duplicate neighbors in cut) ---
 static void rand_grow_sample(const Preproc &P, int k, ThreadRNG &rng,
                              std::vector<int> &out_seq, int root_vi) {
     int root = P.order[root_vi];
@@ -24,19 +27,29 @@ static void rand_grow_sample(const Preproc &P, int k, ThreadRNG &rng,
     out_seq.reserve(k);
     out_seq.push_back(root);
 
+    // Use hash set for O(1) membership checking
+    std::unordered_set<int> in_subgraph;
+    in_subgraph.insert(root);
+
     for (int step = 1; step < k; ++step) {
-        std::vector<int> cut;
+        // Build cut without duplicates using set
+        std::unordered_set<int> cut_set;
         for (int u : out_seq) {
             for (i64 p = P.indptr[u]; p < P.indptr[u + 1]; ++p) {
                 int w = P.indices[p];
                 if (P.index_of[w] < root_vi) continue;
-                if (std::find(out_seq.begin(), out_seq.end(), w) == out_seq.end())
-                    cut.push_back(w);
+                if (in_subgraph.find(w) == in_subgraph.end()) {
+                    cut_set.insert(w);  // Each neighbor appears only once!
+                }
             }
         }
-        if (cut.empty()) return;
+        if (cut_set.empty()) return;
+
+        // Convert to vector for random selection
+        std::vector<int> cut(cut_set.begin(), cut_set.end());
         int newv = cut[rng.next_int((int)cut.size())];
         out_seq.push_back(newv);
+        in_subgraph.insert(newv);
     }
 }
 
@@ -62,37 +75,78 @@ py::tuple sample(i64 handle, int m_per_graph, int k,
     const int B = m_per_graph;
     std::vector<std::vector<int>> samples(B);
 
+    // Check debug mode: set UGS_DEBUG=1 to enable diagnostics
+    static const char* debug_env = std::getenv("UGS_DEBUG");
+    static const bool debug_mode = (debug_env != nullptr && std::string(debug_env) == "1");
+
     std::vector<int> viable_roots;
     viable_roots.reserve(P->order.size());
     for (int vi = 0; vi < (int)P->order.size(); ++vi)
         if (P->bucket_b[vi] > 0.0) viable_roots.push_back(vi);
 
+    // [DIAGNOSTIC] Track relaxation levels
+    int relaxation_level = 0;
+
     // Relaxations
     if (viable_roots.empty()) {
+        relaxation_level = 1;
+        if (debug_mode) {
+            std::fprintf(stderr, "[UGS WARNING] No roots with b>0 (Z=%.2e, n=%zu, k=%d). Using suffix_deg>0 (BREAKS UNIFORMITY)\n",
+                         P->Z, P->order.size(), k);
+        }
         for (int vi = 0; vi < (int)P->order.size(); ++vi)
             if (P->suffix_deg[vi] > 0) viable_roots.push_back(vi);
     }
     if (viable_roots.empty()) {
+        relaxation_level = 2;
+        if (debug_mode) {
+            std::fprintf(stderr, "[UGS WARNING] No roots with suffix_deg>0 (n=%zu, k=%d). Using all roots (BREAKS UNIFORMITY)\n",
+                         P->order.size(), k);
+        }
         for (int vi = 0; vi < (int)P->order.size(); ++vi)
             viable_roots.push_back(vi);
     }
     if (viable_roots.empty()) {
-        std::fprintf(stderr, "sample: no viable_roots at all (n_pos=%zu, k=%d)\n",
+        std::fprintf(stderr, "[UGS ERROR] No viable_roots at all (n=%zu, k=%d)\n",
                      P->order.size(), k);
         throw std::runtime_error("No viable roots available");
     }
 
     // Draw node sets
+    int incomplete_samples = 0;
+    int total_retries = 0;
+    int weighted_samples = 0;
+    int uniform_samples = 0;
+
     for (int b = 0; b < B; ++b) {
         if (viable_roots.empty()) throw std::runtime_error("No viable roots available");
         uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count() ^ (uint64_t)b;
         ThreadRNG rng(seed);
         int root_vi, tries = 0;
         do {
-            root_vi = viable_roots[rng.next_int((int)viable_roots.size())];
+            // Use weighted sampling from alias table (if no relaxations)
+            if (relaxation_level == 0 && P->Z > 0.0) {
+                root_vi = P->alias.sample(rng);
+                if (tries == 0) weighted_samples++;  // count first attempt only
+            } else {
+                // Fallback: uniform sampling (when relaxations triggered)
+                root_vi = viable_roots[rng.next_int((int)viable_roots.size())];
+                if (tries == 0) uniform_samples++;  // count first attempt only
+            }
             rand_grow_sample(*P, k, rng, samples[b], root_vi);
             ++tries;
         } while ((int)samples[b].size() < k && tries < 100);
+
+        if ((int)samples[b].size() < k) {
+            incomplete_samples++;
+        }
+        total_retries += tries - 1;
+    }
+
+    // [DIAGNOSTIC] Report issues (only in debug mode)
+    if (debug_mode) {
+        std::fprintf(stderr, "[UGS DIAGNOSTIC] n=%zu k=%d m=%d Z=%.2e | relaxation=%d weighted=%d uniform=%d incomplete=%d/%d retries=%d\n",
+                     P->order.size(), k, B, P->Z, relaxation_level, weighted_samples, uniform_samples, incomplete_samples, B, total_retries);
     }
 
     // Gather candidate edges per sample, keeping CSR position 'p' for each edge

@@ -369,7 +369,7 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         global_x = x[stacked_nodes]
 
         # gather global edge atrribute
-        if edge_attr:
+        if edge_attr is not None:
             global_edge_attr = edge_attr[edge_src_global_t]
         else:
             global_edge_attr = None

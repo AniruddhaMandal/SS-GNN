@@ -3,10 +3,39 @@
 #include <pybind11/stl.h>
 #include <vector>
 #include <cstring>
+#include <string>
+#include <cstdlib>
 #include "sampler.hpp"
+#include "cache.hpp"
 
 namespace py = pybind11;
 using i64 = int64_t;
+
+// Global preprocessing cache (use pointer to avoid mutex copy issues)
+static LRUCache<size_t, i64>* g_preproc_cache = nullptr;
+static std::mutex g_cache_init_mutex;
+
+static LRUCache<size_t, i64>& get_cache() {
+    if (g_preproc_cache == nullptr) {
+        std::lock_guard<std::mutex> lock(g_cache_init_mutex);
+        if (g_preproc_cache == nullptr) {
+            const char* cache_size_env = std::getenv("UGS_CACHE_SIZE");
+            size_t cache_size = 1000;  // default
+            if (cache_size_env != nullptr) {
+                cache_size = (size_t)std::atoi(cache_size_env);
+            }
+            g_preproc_cache = new LRUCache<size_t, i64>(cache_size);
+
+            const char* debug_env = std::getenv("UGS_DEBUG");
+            bool debug_mode = (debug_env != nullptr && std::string(debug_env) == "1");
+            if (debug_mode) {
+                std::fprintf(stderr, "[UGS INFO] Preprocessing cache initialized: size=%zu (set UGS_CACHE_SIZE to change, 0 to disable)\n",
+                             cache_size);
+            }
+        }
+    }
+    return *g_preproc_cache;
+}
 
 // Return both: (renumbered per-graph edge_index, per-graph->global edge col map)
 static std::pair<torch::Tensor, torch::Tensor>
@@ -81,6 +110,18 @@ py::tuple sample_batch(
     i64 total_edges = 0;
     i64 Bpos = 0;
 
+    // Get cache reference (initializes on first call)
+    auto& cache = get_cache();
+
+    // [DIAGNOSTIC] Track cache performance
+    static const char* debug_env = std::getenv("UGS_DEBUG");
+    static const bool debug_mode = (debug_env != nullptr && std::string(debug_env) == "1");
+    i64 cache_hits = 0;
+    i64 cache_misses = 0;
+
+    // Track handles to clean up (evicted ones)
+    std::vector<i64> handles_to_cleanup;
+
     for (i64 gi = 0; gi < num_graphs; ++gi) {
         const i64 lo = ptr_acc[gi], hi = ptr_acc[gi+1];
         const i64 n  = hi - lo;
@@ -103,8 +144,28 @@ py::tuple sample_batch(
         // slice per-graph edges + mapping to global columns
         auto [g_ei, g_edge2global] = slice_and_renumber_edge_index_with_map(edge_index, lo, hi);
 
-        // build preproc and sample
-        const i64 handle = create_preproc(g_ei, n, k);
+        // Check cache for preprocessing
+        size_t graph_hash = hash_graph(g_ei, n);
+        auto [found, cached_handle] = cache.get(graph_hash);
+
+        i64 handle;
+        bool from_cache = false;
+        if (found) {
+            // Cache hit: reuse preprocessing
+            handle = cached_handle;
+            from_cache = true;
+            cache_hits++;
+        } else {
+            // Cache miss: create preprocessing and add to cache
+            handle = create_preproc(g_ei, n, k);
+            auto [evicted, evicted_handle] = cache.put(graph_hash, handle);
+            if (evicted) {
+                // Track evicted handle for cleanup
+                handles_to_cleanup.push_back(evicted_handle);
+            }
+            cache_misses++;
+        }
+
         std::string edge_mode_for_sample;
         i64 base_offset = 0;
         if (mode == "sample") edge_mode_for_sample = "local";
@@ -172,8 +233,23 @@ py::tuple sample_batch(
         edge_chunks.push_back(edge_index_t_local);
         edge_src_global_chunks.push_back(edge_src_global_local);
 
-        destroy_preproc(handle);
+        // Don't destroy cached handles - they're stored in cache for reuse
+        // Only evicted handles are destroyed below
+
         Bpos += nodes_t_local.size(0);
+    }
+
+    // Clean up evicted handles
+    for (i64 h : handles_to_cleanup) {
+        destroy_preproc(h);
+    }
+
+    // [DIAGNOSTIC] Report cache performance
+    if (debug_mode) {
+        double hit_rate = (cache_hits + cache_misses > 0) ?
+            (100.0 * cache_hits / (cache_hits + cache_misses)) : 0.0;
+        std::fprintf(stderr, "[UGS CACHE] hits=%lld misses=%lld hit_rate=%.1f%% cache_size=%zu\n",
+                     (long long)cache_hits, (long long)cache_misses, hit_rate, cache.size());
     }
 
     // concat edge chunks

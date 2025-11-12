@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import scatter
 from .registry import register_aggregator
+import warnings
+
+# Suppress torch-scatter installation warning
+warnings.filterwarnings('ignore', message='.*torch.?scatter.*')
 
 @register_aggregator('attention')
 class AttentionAggregator(nn.Module):

@@ -22,6 +22,19 @@ namespace py = pybind11;
 using i64 = int64_t;
 using i32 = int32_t;
 
+// Thread-local RNG (simple xorshift) - defined before AliasTable
+struct ThreadRNG {
+    uint64_t s;
+    ThreadRNG(uint64_t seed = 123456789ULL) { if (seed == 0) seed = 1; s = seed; }
+    inline uint64_t next_u64() {
+        uint64_t x = s;
+        x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
+        s = x;
+        return x * 2685821657736338717ULL;
+    }
+    inline int next_int(int n) { return (int)(next_u64() % (uint64_t)n); }
+};
+
 // -- AliasTable (same small implementation used in sampler.cpp) --
 struct AliasTable {
     std::vector<double> prob;
@@ -54,6 +67,14 @@ struct AliasTable {
         for (int idx : large) prob[idx] = 1.0;
         for (int idx : small) prob[idx] = 1.0;
     }
+
+    // Sample from the alias table using weighted distribution
+    int sample(ThreadRNG& rng) const {
+        if (n == 0) return -1;
+        int i = rng.next_int(n);
+        double u = (double)rng.next_u64() / (double)UINT64_MAX;
+        return (u < prob[i]) ? i : alias[i];
+    }
 };
 
 // -- Preproc struct (compatible with sampler.cpp) --
@@ -69,19 +90,6 @@ struct Preproc {
     std::vector<double> bucket_b; // weights per order-position (b[vi])
     AliasTable alias;
     double Z = 0.0;
-};
-
-// Thread-local RNG (simple xorshift)
-struct ThreadRNG {
-    uint64_t s;
-    ThreadRNG(uint64_t seed = 123456789ULL) { if (seed == 0) seed = 1; s = seed; }
-    inline uint64_t next_u64() {
-        uint64_t x = s;
-        x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
-        s = x;
-        return x * 2685821657736338717ULL;
-    }
-    inline int next_int(int n) { return (int)(next_u64() % (uint64_t)n); }
 };
 
 // Declaration for batch_extension

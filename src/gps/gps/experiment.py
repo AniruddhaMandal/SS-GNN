@@ -142,12 +142,38 @@ class Experiment:
 
     # ---------- Setup helpers ----------
     def _setup_logger(self):
+        # Color codes for terminal output
+        class ColoredFormatter(logging.Formatter):
+            COLORS = {
+                'DEBUG': '\033[36m',    # Cyan
+                'INFO': '\033[32m',     # Green
+                'WARNING': '\033[33m',  # Yellow
+                'ERROR': '\033[31m',    # Red
+                'CRITICAL': '\033[35m', # Magenta
+            }
+            RESET = '\033[0m'
+            BOLD = '\033[1m'
+            DIM = '\033[2m'
+
+            def format(self, record):
+                # Color the level name
+                levelname_color = self.COLORS.get(record.levelname, self.RESET)
+                record.levelname = f"{levelname_color}{record.levelname}{self.RESET}"
+
+                # Format timestamp in dim color
+                log_time = self.formatTime(record, '%H:%M:%S')
+                formatted_time = f"{self.DIM}{log_time}{self.RESET}"
+
+                # Format the message
+                message = record.getMessage()
+
+                return f"{formatted_time} | {record.levelname} | {message}"
+
         logger = logging.getLogger(self.cfg.name)
         logger.setLevel(logging.INFO)
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
-        fmt = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
-        ch.setFormatter(fmt)
+        ch.setFormatter(ColoredFormatter())
         if not logger.handlers:
             logger.addHandler(ch)
 

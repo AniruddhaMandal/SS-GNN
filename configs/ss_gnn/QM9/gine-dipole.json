@@ -10,21 +10,21 @@
     "node_feature_dim": 11,
     "edge_feature_dim": 4,
     "hidden_dim": 256,
-    "mpnn_layers": 5,
+    "mpnn_layers": 4,
     "dropout": 0.0,
     "out_dim": 1,
     "pooling": "attention",
-    "temperature": 0.5,
+    "temperature": 0.2,
     "subgraph_sampling": true,
     "subgraph_param": {
-      "k": 8,
+      "k": 4,
       "m": 50,
       "pooling": "sum"
     }
   },
 
   "train": {
-    "epochs": 300,
+    "epochs": 50,
     "train_batch_size": 96,
     "val_batch_size": 96,
     "train_ratio": 0.8,
