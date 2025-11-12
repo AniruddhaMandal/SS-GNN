@@ -1,16 +1,16 @@
 // sampler.cpp
-// UGS sampling implementation — relies on preprocessing from preproc.cpp
+// Clean implementation of UGS (Uniform connected Graphlet Sampling)
+// Based on: "Efficient and near-optimal algorithms for sampling small connected subgraphs"
 
 #include <torch/extension.h>
 #include <pybind11/pybind11.h>
 #include <vector>
-#include <random>
-#include <memory>
-#include <unordered_map>
 #include <unordered_set>
+#include <unordered_map>
+#include <memory>
 #include <mutex>
 #include <chrono>
-#include <algorithm> // for std::find
+#include <random>
 #include <string>
 #include <cstdlib>
 
@@ -19,262 +19,272 @@
 namespace py = pybind11;
 using i64 = int64_t;
 
-// --- Rand-Grow helper (fixed: no duplicate neighbors in cut) ---
-static void rand_grow_sample(const Preproc &P, int k, ThreadRNG &rng,
-                             std::vector<int> &out_seq, int root_vi) {
-    int root = P.order[root_vi];
-    out_seq.clear();
-    out_seq.reserve(k);
-    out_seq.push_back(root);
+//=============================================================================
+// Rand-Grow: Uniformly grow a connected k-subgraph from a root
+//=============================================================================
+// Algorithm:
+// 1. Start with root vertex v (from ordering position root_vi)
+// 2. At each step:
+//    - Compute "cut" = neighbors of current subgraph NOT in subgraph
+//    - Only consider vertices in suffix: index_of[w] >= root_vi
+//    - Uniformly select one vertex from cut and add to subgraph
+// 3. Return when subgraph has k vertices
+//
+// KEY: Each vertex appears in cut at most ONCE (use set for deduplication)
+//=============================================================================
 
-    // Use hash set for O(1) membership checking
+static void rand_grow(
+    const Preproc& P,
+    int k,
+    int root_vi,
+    ThreadRNG& rng,
+    std::vector<int>& out_vertices  // Output: vertex IDs (not order positions)
+) {
+    int root = P.order[root_vi];
+    out_vertices.clear();
+    out_vertices.reserve(k);
+    out_vertices.push_back(root);
+
+    // Track which vertices are in the subgraph (for fast membership test)
     std::unordered_set<int> in_subgraph;
     in_subgraph.insert(root);
 
+    // Grow k-1 more vertices
     for (int step = 1; step < k; ++step) {
-        // Build cut without duplicates using set
+        // Build cut: neighbors of subgraph not yet in subgraph
         std::unordered_set<int> cut_set;
-        for (int u : out_seq) {
+
+        for (int u : out_vertices) {
+            // Iterate over neighbors of u
             for (i64 p = P.indptr[u]; p < P.indptr[u + 1]; ++p) {
                 int w = P.indices[p];
+
+                // Only consider vertices in suffix (at or after root in ordering)
                 if (P.index_of[w] < root_vi) continue;
-                if (in_subgraph.find(w) == in_subgraph.end()) {
-                    cut_set.insert(w);  // Each neighbor appears only once!
-                }
+
+                // Only consider vertices not yet in subgraph
+                if (in_subgraph.count(w)) continue;
+
+                // Add to cut (set ensures no duplicates)
+                cut_set.insert(w);
             }
         }
-        if (cut_set.empty()) return;
 
-        // Convert to vector for random selection
+        // If no neighbors available, growth failed
+        if (cut_set.empty()) {
+            return;  // Return partial subgraph
+        }
+
+        // Uniformly select one vertex from cut
         std::vector<int> cut(cut_set.begin(), cut_set.end());
-        int newv = cut[rng.next_int((int)cut.size())];
-        out_seq.push_back(newv);
-        in_subgraph.insert(newv);
+        int next = cut[rng.next_int((int)cut.size())];
+
+        out_vertices.push_back(next);
+        in_subgraph.insert(next);
     }
 }
 
-// --- Sample API ---
-//
-// Returns:
-// 0) nodes_t          [B, k]        (ids per edge_mode: local for "local"/"flat", global for "global")
-// 1) edge_index_t     [2, E_emit]   (endpoints per edge_mode; may be trimmed from prealloc)
-// 2) edge_ptr_t       [B+1]         (CSR over samples)
-// 3) edge_src_idx_t   [E_emit]      (per-graph LOCAL edge column ids, aligned with edge_index_t)
-//
-py::tuple sample(i64 handle, int m_per_graph, int k,
-                 std::string edge_mode = "local",
-                 int64_t base_offset = 0) {
+//=============================================================================
+// Sample: Generate m subgraphs of size k from preprocessed graph
+//=============================================================================
+
+py::tuple sample(
+    i64 handle,
+    int m,
+    int k,
+    std::string edge_mode,  // "local" | "flat" | "global"
+    int64_t base_offset
+) {
+    // Get preprocessing data
     std::shared_ptr<Preproc> P;
     {
         std::lock_guard<std::mutex> lock(registry_mutex);
         auto it = registry.find(handle);
-        if (it == registry.end()) throw std::runtime_error("Invalid preproc handle");
+        if (it == registry.end()) {
+            throw std::runtime_error("Invalid preproc handle");
+        }
         P = it->second;
     }
 
-    const int B = m_per_graph;
-    std::vector<std::vector<int>> samples(B);
-
-    // Check debug mode: set UGS_DEBUG=1 to enable diagnostics
+    // Check for debug mode
     static const char* debug_env = std::getenv("UGS_DEBUG");
-    static const bool debug_mode = (debug_env != nullptr && std::string(debug_env) == "1");
+    static const bool debug_mode = (debug_env && std::string(debug_env) == "1");
 
+    const int n = (int)P->n;
+
+    // Find viable roots (those with b[vi] > 0)
     std::vector<int> viable_roots;
-    viable_roots.reserve(P->order.size());
-    for (int vi = 0; vi < (int)P->order.size(); ++vi)
-        if (P->bucket_b[vi] > 0.0) viable_roots.push_back(vi);
+    for (int vi = 0; vi < n; ++vi) {
+        if (P->bucket_b[vi] > 0.0) {
+            viable_roots.push_back(vi);
+        }
+    }
 
-    // [DIAGNOSTIC] Track relaxation levels
+    // Fallback if no viable roots
     int relaxation_level = 0;
-
-    // Relaxations
     if (viable_roots.empty()) {
         relaxation_level = 1;
         if (debug_mode) {
-            std::fprintf(stderr, "[UGS WARNING] No roots with b>0 (Z=%.2e, n=%zu, k=%d). Using suffix_deg>0 (BREAKS UNIFORMITY)\n",
-                         P->Z, P->order.size(), k);
+            std::fprintf(stderr, "[UGS WARNING] No roots with b>0 (Z=%.2e). Using suffix_deg>0 (BREAKS UNIFORMITY)\n", P->Z);
         }
-        for (int vi = 0; vi < (int)P->order.size(); ++vi)
-            if (P->suffix_deg[vi] > 0) viable_roots.push_back(vi);
+        for (int vi = 0; vi < n; ++vi) {
+            if (P->suffix_deg[vi] > 0) {
+                viable_roots.push_back(vi);
+            }
+        }
     }
+
     if (viable_roots.empty()) {
         relaxation_level = 2;
         if (debug_mode) {
-            std::fprintf(stderr, "[UGS WARNING] No roots with suffix_deg>0 (n=%zu, k=%d). Using all roots (BREAKS UNIFORMITY)\n",
-                         P->order.size(), k);
+            std::fprintf(stderr, "[UGS WARNING] No roots with suffix_deg>0. Using all nodes (BREAKS UNIFORMITY)\n");
         }
-        for (int vi = 0; vi < (int)P->order.size(); ++vi)
+        for (int vi = 0; vi < n; ++vi) {
             viable_roots.push_back(vi);
+        }
     }
+
     if (viable_roots.empty()) {
-        std::fprintf(stderr, "[UGS ERROR] No viable_roots at all (n=%zu, k=%d)\n",
-                     P->order.size(), k);
         throw std::runtime_error("No viable roots available");
     }
 
-    // Draw node sets
-    int incomplete_samples = 0;
-    int total_retries = 0;
-    int weighted_samples = 0;
-    int uniform_samples = 0;
+    // Sample m subgraphs
+    std::vector<std::vector<int>> samples(m);
+    int incomplete = 0;
+    int weighted_count = 0;
+    int uniform_count = 0;
 
-    for (int b = 0; b < B; ++b) {
-        if (viable_roots.empty()) throw std::runtime_error("No viable roots available");
-        uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count() ^ (uint64_t)b;
+    for (int i = 0; i < m; ++i) {
+        // Create RNG for this sample
+        uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        seed ^= (uint64_t)i * 0x9e3779b97f4a7c15ULL;  // Mix in sample index
         ThreadRNG rng(seed);
-        int root_vi, tries = 0;
-        do {
-            // Use weighted sampling from alias table (if no relaxations)
-            if (relaxation_level == 0 && P->Z > 0.0) {
-                root_vi = P->alias.sample(rng);
-                if (tries == 0) weighted_samples++;  // count first attempt only
-            } else {
-                // Fallback: uniform sampling (when relaxations triggered)
-                root_vi = viable_roots[rng.next_int((int)viable_roots.size())];
-                if (tries == 0) uniform_samples++;  // count first attempt only
-            }
-            rand_grow_sample(*P, k, rng, samples[b], root_vi);
-            ++tries;
-        } while ((int)samples[b].size() < k && tries < 100);
 
-        if ((int)samples[b].size() < k) {
-            incomplete_samples++;
+        // Select root
+        int root_vi;
+        if (relaxation_level == 0 && P->Z > 0.0) {
+            // Weighted selection via alias table
+            root_vi = P->alias.sample(rng);
+            weighted_count++;
+        } else {
+            // Uniform selection (fallback)
+            root_vi = viable_roots[rng.next_int((int)viable_roots.size())];
+            uniform_count++;
         }
-        total_retries += tries - 1;
+
+        // Grow subgraph
+        rand_grow(*P, k, root_vi, rng, samples[i]);
+
+        if ((int)samples[i].size() < k) {
+            incomplete++;
+        }
     }
 
-    // [DIAGNOSTIC] Report issues (only in debug mode)
+    // Report diagnostics
     if (debug_mode) {
-        std::fprintf(stderr, "[UGS DIAGNOSTIC] n=%zu k=%d m=%d Z=%.2e | relaxation=%d weighted=%d uniform=%d incomplete=%d/%d retries=%d\n",
-                     P->order.size(), k, B, P->Z, relaxation_level, weighted_samples, uniform_samples, incomplete_samples, B, total_retries);
+        std::fprintf(stderr, "[UGS SAMPLE] n=%d k=%d m=%d Z=%.2e | relax=%d weighted=%d uniform=%d incomplete=%d\n",
+                     n, k, m, P->Z, relaxation_level, weighted_count, uniform_count, incomplete);
     }
 
-    // Gather candidate edges per sample, keeping CSR position 'p' for each edge
-    struct EdgeTrip { int u_local; int v_local; i64 csr_pos; };
-    std::vector<std::vector<EdgeTrip>> samples_edges(B);
-    i64 total_edges = 0;
-
-    for (int b = 0; b < B; ++b) {
-        const auto &nodes = samples[b];
-        if ((int)nodes.size() < k) continue; // failed sample: no edges
-
-        // global->local map within this sample's k-set
-        std::unordered_map<int,int> g2l;
-        g2l.reserve((size_t)k * 2);
-        for (int i = 0; i < k; ++i) g2l[nodes[i]] = i;
-
-        auto &edges = samples_edges[b];
-        for (int i = 0; i < k; ++i) {
-            int u = nodes[i];
-            for (i64 p = P->indptr[u]; p < P->indptr[u + 1]; ++p) {
-                int v = P->indices[p];
-                auto it = g2l.find(v);
-                if (it != g2l.end()) {
-                    edges.push_back({ i, it->second, p }); // keep CSR linear index 'p'
-                }
-            }
-        }
-        total_edges += (i64)edges.size();
-    }
-
+    // Build output tensors
     auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU).pinned_memory(true);
 
-    torch::Tensor nodes_t          = torch::full({B, k}, -1, opts);
-    torch::Tensor edge_ptr_t       = torch::empty({B + 1}, opts);
-    torch::Tensor edge_index_t     = torch::empty({2, total_edges}, opts);
-    torch::Tensor edge_src_idx_t   = torch::empty({total_edges}, opts);
+    // Nodes tensor [m, k]
+    torch::Tensor nodes_t = torch::full({m, k}, -1, opts);
+    auto nodes_acc = nodes_t.accessor<i64, 2>();
 
-    auto nodes_ptr     = nodes_t.data_ptr<i64>();
-    auto edge_ptr_ptr  = edge_ptr_t.data_ptr<i64>();
-    auto edge_idx_ptr  = edge_index_t.data_ptr<i64>();
-    auto edge_src_ptr  = edge_src_idx_t.data_ptr<i64>();
+    // Edge structures
+    std::vector<i64> edge_ptr_vec;
+    edge_ptr_vec.reserve(m + 1);
+    edge_ptr_vec.push_back(0);
 
-    edge_ptr_ptr[0] = 0;
-    i64 epos = 0;
+    struct EdgeData { int u_local; int v_local; i64 csr_pos; };
+    std::vector<std::vector<EdgeData>> sample_edges(m);
 
-    for (int b = 0; b < B; ++b) {
-        // write nodes with proper globalization based on edge_mode
-        for (int i = 0; i < (int)samples[b].size() && i < k; ++i) {
-            i64 node_id = samples[b][i];
-            // For "global" mode, nodes should be globalized
+    // Process each sample
+    for (int i = 0; i < m; ++i) {
+        const auto& verts = samples[i];
+        const int size = (int)verts.size();
+
+        // Write node IDs
+        for (int j = 0; j < size && j < k; ++j) {
+            i64 node_id = verts[j];
+            // Apply coordinate transformation based on edge_mode
             if (edge_mode == "global") {
                 node_id += base_offset;
             }
-            nodes_ptr[b * (i64)k + i] = node_id;
+            nodes_acc[i][j] = node_id;
         }
-        for (int i = (int)samples[b].size(); i < k; ++i)
-            nodes_ptr[b * (i64)k + i] = -1;
 
-        // write edges (+ src local ids), respecting edge_mode
-        for (const auto &e : samples_edges[b]) {
-            const int u_local = e.u_local;
-            const int v_local = e.v_local;
+        // Skip edges if sample is incomplete
+        if (size < k) {
+            edge_ptr_vec.push_back(edge_ptr_vec.back());
+            continue;
+        }
 
-            // Validate that we have valid nodes
-            if (u_local >= (int)samples[b].size() || v_local >= (int)samples[b].size()) {
-                continue; // skip invalid edges
+        // Build local node index map
+        std::unordered_map<int, int> global_to_local;
+        for (int j = 0; j < size; ++j) {
+            global_to_local[verts[j]] = j;
+        }
+
+        // Extract edges within subgraph
+        for (int j = 0; j < size; ++j) {
+            int u = verts[j];
+            for (i64 p = P->indptr[u]; p < P->indptr[u + 1]; ++p) {
+                int v = P->indices[p];
+                auto it = global_to_local.find(v);
+                if (it != global_to_local.end()) {
+                    int v_local = it->second;
+                    // Store edge (u_local, v_local) and its CSR position
+                    sample_edges[i].push_back({j, v_local, p});
+                }
             }
+        }
 
-            // read node ids we just wrote (already in the correct coordinate system)
-            const i64 u_node = nodes_ptr[b * (i64)k + (i64)u_local];
-            const i64 v_node = nodes_ptr[b * (i64)k + (i64)v_local];
-            if (u_node == -1 || v_node == -1) continue; // guard (degenerate sample)
+        edge_ptr_vec.push_back(edge_ptr_vec.back() + (i64)sample_edges[i].size());
+    }
 
-            // Compute edge endpoints based on edge_mode
-            i64 u_final = 0;
-            i64 v_final = 0;
-            
+    // Build edge tensors
+    i64 total_edges = edge_ptr_vec.back();
+    torch::Tensor edge_index_t = torch::empty({2, total_edges}, opts);
+    torch::Tensor edge_src_t = torch::empty({total_edges}, opts);
+
+    auto edge_u = edge_index_t.data_ptr<i64>();
+    auto edge_v = edge_u + total_edges;
+    auto edge_src = edge_src_t.data_ptr<i64>();
+
+    i64 pos = 0;
+    for (int i = 0; i < m; ++i) {
+        for (const auto& e : sample_edges[i]) {
+            // Compute final edge endpoints based on mode
+            i64 u_final, v_final;
             if (edge_mode == "local") {
-                // Nodes are local within sample (0..k-1)
-                u_final = (i64)u_local;
-                v_final = (i64)v_local;
+                u_final = e.u_local;
+                v_final = e.v_local;
             } else if (edge_mode == "flat") {
-                // Flatten across batch
-                u_final = (i64)b * (i64)k + (i64)u_local;
-                v_final = (i64)b * (i64)k + (i64)v_local;
-            } else if (edge_mode == "global") {
-                // Use the globalized node IDs directly
-                u_final = u_node;
-                v_final = v_node;
-            } else {
-                throw std::runtime_error(std::string("Unknown edge_mode: ") + edge_mode);
+                u_final = (i64)i * k + e.u_local;
+                v_final = (i64)i * k + e.v_local;
+            } else {  // global
+                i64 u_global = nodes_acc[i][e.u_local];
+                i64 v_global = nodes_acc[i][e.v_local];
+                u_final = u_global;
+                v_final = v_global;
             }
 
-            // write edge
-            edge_idx_ptr[epos]               = u_final;
-            edge_idx_ptr[total_edges + epos] = v_final;
-
-            // CRITICAL: Write the per-graph edge column index
-            // This is the index in the per-graph CSR representation
-            edge_src_ptr[epos] = (i64)P->edge_col_of_csr_pos[(size_t)e.csr_pos];
-
-            ++epos;
+            edge_u[pos] = u_final;
+            edge_v[pos] = v_final;
+            edge_src[pos] = P->edge_col_of_csr_pos[e.csr_pos];
+            pos++;
         }
-
-        edge_ptr_ptr[b + 1] = epos;
     }
 
-    // Trim if we skipped any edges (this maintains alignment)
-    if (epos < total_edges) {
-        // edge_index trim
-        torch::Tensor edge_index_trim = torch::empty({2, epos}, opts);
-        auto trim_ptr = edge_index_trim.data_ptr<i64>();
-        for (i64 i = 0; i < epos; ++i) {
-            trim_ptr[i]       = edge_idx_ptr[i];
-            trim_ptr[epos + i] = edge_idx_ptr[total_edges + i];
-        }
-        edge_index_t = edge_index_trim;
-
-        // edge_src_idx trim - MUST stay aligned with edge_index_t
-        torch::Tensor edge_src_trim = torch::empty({epos}, opts);
-        std::memcpy(edge_src_trim.data_ptr<i64>(), edge_src_ptr, sizeof(i64) * (size_t)epos);
-        edge_src_idx_t = edge_src_trim;
+    // Build edge_ptr tensor
+    torch::Tensor edge_ptr_t = torch::empty({(i64)edge_ptr_vec.size()}, opts);
+    auto edge_ptr_acc = edge_ptr_t.accessor<i64, 1>();
+    for (size_t i = 0; i < edge_ptr_vec.size(); ++i) {
+        edge_ptr_acc[i] = edge_ptr_vec[i];
     }
 
-    // Return minimal pack for downstream:
-    // nodes_t [B, k]: node IDs in appropriate coordinate system
-    // edge_index_t [2, E_actual]: edge endpoints in appropriate coordinate system
-    // edge_ptr_t [B+1]: CSR pointer over samples
-    // edge_src_idx_t [E_actual]: per-graph edge column indices (0..E_graph-1)
-    return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, edge_src_idx_t);
+    return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, edge_src_t);
 }
