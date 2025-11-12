@@ -22,7 +22,7 @@ license_files = ["LICENSE"] if license_file.exists() else []
 
 setup(
     name="gps",                      
-    version="1.1.0",
+    version="1.5.0",
     description="Graph neural network training framework with subgraph sampling",
     long_description=long_description,
     long_description_content_type=long_description_content_type,
