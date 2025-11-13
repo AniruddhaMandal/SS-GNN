@@ -363,10 +363,19 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         """
         device = x.device
         num_subgraphs, k = nodes_t.shape
-        
-        # gather global node attrib 
+
+        # gather global node attrib
         stacked_nodes = nodes_t.flatten()
-        global_x = x[stacked_nodes]
+
+        # Handle -1 padding: clamp to 0 and create mask
+        valid_mask = (stacked_nodes >= 0)
+        stacked_nodes_clamped = stacked_nodes.clamp(min=0)
+
+        global_x = x[stacked_nodes_clamped]
+
+        # Zero out features for padded positions
+        if not valid_mask.all():
+            global_x = global_x * valid_mask.unsqueeze(-1).float()
 
         # gather global edge atrribute
         if edge_attr is not None:
