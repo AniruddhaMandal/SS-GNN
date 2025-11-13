@@ -41,6 +41,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import ugs_sampler
+import uniform_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
@@ -132,7 +133,7 @@ class Experiment:
         self.history = {"train_loss": [], "val_loss": []}
 
         # Set subgraph sampler
-        self.sampler = ugs_sampler.sample_batch
+        self.sampler = uniform_sampler.sample_batch
 
         # Build components
         self.build()
