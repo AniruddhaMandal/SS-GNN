@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <unordered_set>
 #include <queue>
+#include <omp.h>
 
 namespace py = pybind11;
 
@@ -89,20 +90,26 @@ py::tuple sample_batch(
     const std::string& mode,
     uint64_t seed
 ) {
-    TORCH_CHECK(edge_index.device().is_cpu(), "edge_index must be on CPU");
     TORCH_CHECK(edge_index.dtype() == torch::kInt64, "edge_index must be int64");
-    TORCH_CHECK(ptr.device().is_cpu(), "ptr must be on CPU");
     TORCH_CHECK(ptr.dtype() == torch::kInt64, "ptr must be int64");
 
-    auto ei = edge_index.accessor<i64, 2>();
-    auto ptr_acc = ptr.accessor<i64, 1>();
+    // Remember input device for output
+    auto input_device = edge_index.device();
+
+    // Move to CPU for processing (enumeration requires CPU)
+    auto edge_index_cpu = edge_index.cpu();
+    auto ptr_cpu = ptr.cpu();
+
+    auto ei = edge_index_cpu.accessor<i64, 2>();
+    auto ptr_acc = ptr_cpu.accessor<i64, 1>();
 
     const i64 num_graphs = ptr_acc.size(0) - 1;
-    const i64 m = edge_index.size(1);
+    const i64 m = edge_index_cpu.size(1);
 
-    // Build per-graph adjacency lists
+    // Build per-graph adjacency lists (parallelized across graphs)
     std::vector<EnumeratedSubgraphs> graph_subgraphs(num_graphs);
 
+    #pragma omp parallel for schedule(dynamic)
     for (i64 g = 0; g < num_graphs; ++g) {
         i64 node_start = ptr_acc[g];
         i64 node_end = ptr_acc[g + 1];
@@ -138,8 +145,8 @@ py::tuple sample_batch(
 
     const i64 total_samples = num_graphs * m_per_graph;
 
-    // Output tensors
-    auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU);
+    // Output tensors (use pinned memory for faster GPU transfer)
+    auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU).pinned_memory(true);
 
     torch::Tensor nodes_t = torch::full({total_samples, k}, -1, opts);
     auto nodes_acc = nodes_t.accessor<i64, 2>();
@@ -259,6 +266,15 @@ py::tuple sample_batch(
     }
     for (size_t i = 0; i < sample_ptr_vec.size(); ++i) {
         sample_ptr_acc[i] = sample_ptr_vec[i];
+    }
+
+    // Transfer to input device if needed (GPU support)
+    if (!input_device.is_cpu()) {
+        nodes_t = nodes_t.to(input_device);
+        edge_index_t = edge_index_t.to(input_device);
+        edge_ptr_t = edge_ptr_t.to(input_device);
+        sample_ptr_t = sample_ptr_t.to(input_device);
+        edge_src_t = edge_src_t.to(input_device);
     }
 
     return py::make_tuple(nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_t);

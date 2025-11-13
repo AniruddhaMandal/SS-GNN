@@ -15,7 +15,8 @@ setup(
             name='uniform_sampler',
             sources=['src/uniform_sampler.cpp'],
             include_dirs=[include_dir],
-            extra_compile_args=['-O3', '-std=c++17'],
+            extra_compile_args=['-O3', '-std=c++17', '-fopenmp'],
+            extra_link_args=['-fopenmp'],
         ),
     ],
     cmdclass={

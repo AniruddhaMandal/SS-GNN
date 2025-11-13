@@ -105,11 +105,31 @@ python tests/test_uniform_sampler.py
 python tests/test_compare_samplers.py
 ```
 
+## GPU Support
+
+✓ **CUDA-aware**: Automatically handles GPU tensors
+- Accepts GPU tensors as input
+- Returns tensors on the same device as input
+- Uses pinned memory for faster CPU↔GPU transfer
+- Enumeration happens on CPU (fast for small graphs)
+
+```python
+# Works seamlessly with GPU
+edge_index_gpu = edge_index.cuda()
+ptr_gpu = ptr.cuda()
+
+# Returns GPU tensors automatically
+nodes_t, *_ = uniform_sampler.sample_batch(
+    edge_index_gpu, ptr_gpu, m_per_graph=100, k=5
+)
+# nodes_t.device == cuda:0 ✓
+```
+
 ## Limitations
 
 - Only works efficiently for small graphs (n < 50) and small k (k < 8)
 - For larger graphs, consider MCMC-based approaches
-- Currently CPU-only (enumeration step)
+- Enumeration on CPU (not a bottleneck for small graphs)
 - No caching between calls (re-enumerates each time)
 
 ## Future Improvements

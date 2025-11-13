@@ -33,5 +33,11 @@ def sample_batch(
         - nodes_t contains GLOBAL node IDs to gather features from batch
         - edge_index_t contains LOCAL indices [0, k-1] within each sample
         This matches the UGS sampler API.
+
+        GPU Support:
+        - Automatically handles GPU tensors (accepts cuda input)
+        - Returns tensors on same device as input
+        - Uses pinned memory for fast CPU↔GPU transfer
+        - Enumeration happens on CPU (fast for small graphs)
     """
     ...
