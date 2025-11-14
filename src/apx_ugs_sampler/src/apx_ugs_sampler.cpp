@@ -1,0 +1,538 @@
+#include "apx_ugs_sampler.hpp"
+#include <omp.h>
+#include <queue>
+#include <set>
+
+// ============================================================================
+// Graph Implementation
+// ============================================================================
+
+Graph::Graph(const torch::Tensor& edge_index, const torch::Tensor& ptr) {
+    auto edge_index_acc = edge_index.accessor<int64_t, 2>();
+    auto ptr_acc = ptr.accessor<int64_t, 1>();
+
+    // Determine number of vertices from max vertex index in edge_index
+    int64_t start = ptr_acc[0];
+    int64_t end = ptr_acc[1];
+
+    n = 0;
+    for (int64_t i = start; i < end; i++) {
+        n = std::max(n, static_cast<int>(edge_index_acc[0][i]) + 1);
+        n = std::max(n, static_cast<int>(edge_index_acc[1][i]) + 1);
+    }
+
+    adj.resize(n);
+    degrees.resize(n, 0);
+
+    // Build adjacency list for the first graph
+    for (int64_t i = start; i < end; i++) {
+        int u = edge_index_acc[0][i];
+        int v = edge_index_acc[1][i];
+        adj[u].push_back(v);
+        adj[v].push_back(u);
+    }
+
+    // Compute degrees and remove duplicates
+    for (int v = 0; v < n; v++) {
+        std::sort(adj[v].begin(), adj[v].end());
+        adj[v].erase(std::unique(adj[v].begin(), adj[v].end()), adj[v].end());
+        degrees[v] = adj[v].size();
+    }
+}
+
+bool Graph::has_edge(int u, int v) const {
+    if (degrees[u] < degrees[v]) std::swap(u, v);
+    return std::binary_search(adj[v].begin(), adj[v].end(), u);
+}
+
+// ============================================================================
+// Algorithm 5: APX-DD - Approximate Degree-Dominating Order
+// ============================================================================
+
+DDOrder apx_dd(const Graph& G, int k, double beta, ApxRNG& rng) {
+    int n = G.n;
+    double eta = std::pow(beta, 1.0 / static_cast<double>(k - 1)) / (6.0 * k * k);  // β^(1/(k-1)) / (6k²)
+    int h = static_cast<int>(std::ceil(10.0 / (eta * eta) * std::log(n)));
+
+    DDOrder dd_order(n);
+
+    // Initialize scores and order by degree
+    std::vector<double> scores(n);
+    for (int v = 0; v < n; v++) {
+        scores[v] = static_cast<double>(G.degree(v));
+        dd_order.order[v] = v;
+    }
+
+    // Sort by decreasing degree (initial guess)
+    std::sort(dd_order.order.begin(), dd_order.order.end(),
+              [&](int a, int b) {
+                  if (scores[a] != scores[b]) return scores[a] > scores[b];
+                  return a > b;
+              });
+
+    // Update positions
+    for (int i = 0; i < n; i++) {
+        dd_order.position[dd_order.order[i]] = i;
+    }
+
+    // Process each vertex
+    for (int idx = 0; idx < n; idx++) {
+        int v = dd_order.order[idx];
+
+        if (G.degree(v) == 0) {
+            dd_order.estimates[v] = 0.0;
+            continue;
+        }
+
+        // Sample h neighbors (with replacement)
+        int count = 0;
+        const auto& neighbors = G.neighbors(v);
+
+        for (int i = 0; i < h; i++) {
+            int neighbor_idx = rng.next_int(neighbors.size());
+            int u = neighbors[neighbor_idx];
+
+            if (dd_order.comes_before(v, u)) {
+                count++;
+            }
+        }
+
+        double threshold = 2.0 * eta * h;
+
+        if (count >= threshold) {
+            // v stays in current position
+            dd_order.estimates[v] = std::pow(static_cast<double>(G.degree(v)), 5.0);
+        } else {
+            // Move v down in the order
+            dd_order.estimates[v] = 0.0;
+            scores[v] = 3.0 * eta * G.degree(v);
+
+            // Re-sort from current position onwards
+            std::sort(dd_order.order.begin() + idx, dd_order.order.end(),
+                      [&](int a, int b) {
+                          if (scores[a] != scores[b]) return scores[a] > scores[b];
+                          return a > b;
+                      });
+
+            // Update positions
+            for (int i = idx; i < n; i++) {
+                dd_order.position[dd_order.order[i]] = i;
+            }
+        }
+    }
+
+    // Check for small degree vertices (k/η threshold)
+    double threshold = static_cast<double>(k) / eta;
+
+    for (int v = 0; v < n; v++) {
+        if (G.degree(v) <= threshold) {
+            // Check if B(v) is non-empty using BFS
+            std::queue<int> q;
+            std::unordered_set<int> visited;
+            q.push(v);
+            visited.insert(v);
+
+            bool found_k_nodes = false;
+            while (!q.empty() && visited.size() < static_cast<size_t>(k)) {
+                int u = q.front();
+                q.pop();
+
+                for (int w : G.neighbors(u)) {
+                    if (visited.find(w) == visited.end() && dd_order.comes_before(v, w)) {
+                        visited.insert(w);
+                        q.push(w);
+
+                        if (visited.size() >= static_cast<size_t>(k)) {
+                            found_k_nodes = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (found_k_nodes) {
+                // Compute actual degree in G(v) and update estimate
+                int deg_in_Gv = 0;
+                for (int u : G.neighbors(v)) {
+                    if (dd_order.comes_before(v, u)) {
+                        deg_in_Gv++;
+                    }
+                }
+                dd_order.estimates[v] = std::pow(static_cast<double>(deg_in_Gv), 5.0);
+            } else {
+                dd_order.estimates[v] = 0.0;
+            }
+        }
+    }
+
+    return dd_order;
+}
+
+// ============================================================================
+// Algorithm 7: EstimateCuts - Estimate Cut Sizes
+// ============================================================================
+
+std::vector<double> estimate_cuts(
+    const Graph& G,
+    const DDOrder& order,
+    int v,
+    const std::vector<int>& U,
+    int k,
+    double alpha,
+    double beta,
+    double delta,
+    ApxRNG& rng
+) {
+    double ell_raw = 1.0 / (k * delta * alpha * alpha);
+
+    // Compute h with overflow protection
+    // h = ceil(ℓ² * log(k/β)), but clamp to avoid overflow
+    double h_double = ell_raw * ell_raw * std::log(k / beta);
+    const int MAX_H = 100;  // Reasonable upper limit for sampling
+    int h;
+
+    if (std::isinf(h_double) || h_double > MAX_H) {
+        h = MAX_H;
+    } else if (h_double < 10.0) {
+        h = 10;
+    } else {
+        h = static_cast<int>(std::ceil(h_double));
+    }
+
+    // Clamp ell to be reasonable relative to h
+    // We need ell <= h so the condition "count >= ell" can actually be satisfied
+    double ell = std::min(ell_raw, static_cast<double>(h) * 0.5);
+
+    std::vector<double> cuts(U.size(), 0.0);
+    std::unordered_set<int> U_set(U.begin(), U.end());
+
+    for (size_t i = 0; i < U.size(); i++) {
+        int u = U[i];
+        const auto& neighbors = G.neighbors(u);
+
+        if (neighbors.empty()) {
+            cuts[i] = 0.0;
+            continue;
+        }
+
+        // Sample h neighbors (with replacement)
+        int count = 0;
+        for (int j = 0; j < h; j++) {
+            int neighbor_idx = rng.next_int(neighbors.size());
+            int w = neighbors[neighbor_idx];
+
+            if (order.comes_before(v, w) && U_set.find(w) == U_set.end()) {
+                count++;
+            }
+        }
+
+        if (count >= ell) {
+            cuts[i] = static_cast<double>(G.degree(u) * count) / static_cast<double>(h);
+        } else {
+            cuts[i] = 0.0;
+        }
+    }
+
+    return cuts;
+}
+
+// ============================================================================
+// Algorithm 8: APX-RAND-GROW - Random Growing with Estimated Cuts
+// ============================================================================
+
+std::vector<int> apx_rand_grow(
+    const Graph& G,
+    const DDOrder& order,
+    int v,
+    int k,
+    double alpha,
+    double beta,
+    double gamma,
+    ApxRNG& rng
+) {
+    std::vector<int> S = {v};
+    double delta = gamma / std::pow(k, 4.0);
+
+    for (int i = 1; i < k; i++) {
+        // Estimate cuts for current set S
+        auto cuts = estimate_cuts(G, order, v, S, k, alpha, beta, delta, rng);
+
+        // Compute total cut
+        double total_cut = 0.0;
+        for (double c : cuts) {
+            total_cut += c;
+        }
+
+        if (total_cut <= 0.0) {
+            // Failed to grow - return empty to signal failure
+            return {};
+        }
+
+        // Select vertex u from S with probability proportional to its cut
+        double r = rng.next_double() * total_cut;
+        double cumsum = 0.0;
+        int selected_u = S[0];
+
+        for (size_t j = 0; j < S.size(); j++) {
+            cumsum += cuts[j];
+            if (r <= cumsum) {
+                selected_u = S[j];
+                break;
+            }
+        }
+
+        // Select random neighbor of selected_u that is in G(v) \ S
+        const auto& neighbors = G.neighbors(selected_u);
+        std::vector<int> valid_neighbors;
+
+        for (int w : neighbors) {
+            if (order.comes_before(v, w)) {
+                bool in_S = false;
+                for (int s : S) {
+                    if (s == w) {
+                        in_S = true;
+                        break;
+                    }
+                }
+                if (!in_S) {
+                    valid_neighbors.push_back(w);
+                }
+            }
+        }
+
+        if (valid_neighbors.empty()) {
+            return {};  // Failed to grow
+        }
+
+        int new_vertex = valid_neighbors[rng.next_int(valid_neighbors.size())];
+        S.push_back(new_vertex);
+    }
+
+    return S;
+}
+
+// ============================================================================
+// Algorithm 9: APX-PROB - Approximate Probability Computation
+// ============================================================================
+
+double apx_prob(
+    const Graph& G,
+    const DDOrder& order,
+    const std::vector<int>& S,
+    double alpha,
+    double beta,
+    double rho,
+    ApxRNG& rng
+) {
+    int k = S.size();
+    if (k == 0) return 0.0;
+
+    int v = S[0];  // First vertex (smallest in order)
+    double total_prob = 0.0;
+
+    // Enumerate all permutations (simplified for k=6)
+    std::vector<int> remaining(S.begin() + 1, S.end());
+    std::sort(remaining.begin(), remaining.end());
+
+    int perm_count = 0;
+    const int max_perms = 720;  // 6! = 720
+
+    do {
+        std::vector<int> perm = {v};
+        perm.insert(perm.end(), remaining.begin(), remaining.end());
+
+        double perm_prob = 1.0;
+
+        for (int i = 0; i < k - 1; i++) {
+            std::vector<int> Si(perm.begin(), perm.begin() + i + 1);
+
+            // Count neighbors of perm[i+1] in Si
+            int ni = 0;
+            for (int u : Si) {
+                if (G.has_edge(u, perm[i + 1])) {
+                    ni++;
+                }
+            }
+
+            // Estimate cut size with enhanced sampling
+            double delta = rho / (k * k);
+            auto cuts = estimate_cuts(G, order, v, Si, k, alpha, beta / std::pow(k, 6.0), delta, rng);
+
+            double ci = 0.0;
+            for (double c : cuts) {
+                ci += c;
+            }
+
+            if (ci > 0.0) {
+                perm_prob *= static_cast<double>(ni) / ci;
+            } else {
+                perm_prob = 0.0;
+                break;
+            }
+        }
+
+        total_prob += perm_prob;
+        perm_count++;
+
+        if (perm_count >= max_perms) break;
+
+    } while (std::next_permutation(remaining.begin(), remaining.end()));
+
+    return total_prob;
+}
+
+// ============================================================================
+// Algorithm 10: APX-UGS - Main Sampling Algorithm
+// ============================================================================
+
+std::vector<int> apx_ugs_sample_one(
+    const Graph& G,
+    const DDOrder& order,
+    int k,
+    double epsilon,
+    ApxRNG& rng
+) {
+    const int C1 = 2;  // Smaller constants for practical use
+    const int C2 = 2;
+    double beta = epsilon / 2.0;
+    double alpha = std::pow(beta, 1.0 / static_cast<double>(k - 1)) / (6.0 * k * k * k);  // β^(1/(k-1))/(6k³)
+
+    // Compute total estimate Z
+    double Z = 0.0;
+    for (int v = 0; v < G.n; v++) {
+        Z += order.estimates[v];
+    }
+
+    if (Z <= 0.0) {
+        return {};  // No valid graphlets
+    }
+
+    // Rejection sampling loop
+    const int max_trials = 1000000;
+    for (int trial = 0; trial < max_trials; trial++) {
+        // Draw vertex v with probability proportional to estimate
+        double r = rng.next_double() * Z;
+        double cumsum = 0.0;
+        int v = 0;
+
+        for (int u = 0; u < G.n; u++) {
+            cumsum += order.estimates[u];
+            if (r <= cumsum) {
+                v = u;
+                break;
+            }
+        }
+
+        if (order.estimates[v] <= 0.0) continue;
+
+        // Grow graphlet using APX-RAND-GROW
+        double gamma = epsilon * std::pow(3.0, -k) * std::pow(k, static_cast<double>(-C2));
+        auto S = apx_rand_grow(G, order, v, k, alpha, beta, gamma, rng);
+
+        if (S.empty() || static_cast<int>(S.size()) != k) {
+            continue;  // Failed to grow, try again
+        }
+
+        // Compute acceptance probability using APX-PROB
+        double rho = epsilon * std::pow(3.0, -k) * std::pow(k, static_cast<double>(-C2));
+        double p_hat = apx_prob(G, order, S, alpha, beta, rho, rng);
+
+        if (p_hat <= 0.0) {
+            continue;  // Invalid probability, try again
+        }
+
+        double acceptance_prob = (beta / Z) * std::pow(k, static_cast<double>(-C1)) /
+                                (order.estimates[v] * p_hat);
+
+        acceptance_prob = std::min(1.0, acceptance_prob);
+
+        if (rng.next_double() < acceptance_prob) {
+            return S;  // Accepted!
+        }
+    }
+
+    return {};  // Failed after max trials
+}
+
+// ============================================================================
+// Main Entry Point - Compatible with uniform_sampler API
+// ============================================================================
+
+py::tuple sample_batch(
+    const torch::Tensor& edge_index,
+    const torch::Tensor& ptr,
+    int m_per_graph,
+    int k,
+    const std::string& mode,
+    uint64_t seed,
+    double epsilon
+) {
+    // For single graph, build it directly (avoid OpenMP complexity for now)
+    Graph G(edge_index, ptr);
+
+    if (G.n < k) {
+        // Return empty
+        auto samples_tensor = torch::zeros({k, 0}, torch::kInt64);
+        auto ptr_tensor = torch::zeros({1}, torch::kInt64);
+        return py::make_tuple(samples_tensor, ptr_tensor);
+    }
+
+    // Compute degree-dominating order once
+    ApxRNG rng(seed);
+    DDOrder order = apx_dd(G, k, epsilon / 2.0, rng);
+
+    // Sample graphlets
+    std::vector<std::vector<int64_t>> all_samples;
+
+    for (int m = 0; m < m_per_graph; m++) {
+        auto sample = apx_ugs_sample_one(G, order, k, epsilon, rng);
+
+        if (!sample.empty()) {
+            std::vector<int64_t> global_sample;
+            for (int v : sample) {
+                global_sample.push_back(static_cast<int64_t>(v));
+            }
+            all_samples.push_back(global_sample);
+        }
+    }
+
+    // Build output tensors
+    int64_t total_samples = all_samples.size();
+
+    if (total_samples == 0) {
+        auto samples_tensor = torch::zeros({k, 0}, torch::kInt64);
+        auto ptr_tensor = torch::zeros({1}, torch::kInt64);
+        return py::make_tuple(samples_tensor, ptr_tensor);
+    }
+
+    auto samples_tensor = torch::zeros({k, total_samples}, torch::kInt64);
+    auto samples_acc = samples_tensor.accessor<int64_t, 2>();
+
+    for (int64_t i = 0; i < total_samples; i++) {
+        for (int j = 0; j < k; j++) {
+            samples_acc[j][i] = all_samples[i][j];
+        }
+    }
+
+    // Create ptr tensor
+    auto ptr_tensor = torch::arange(0, total_samples + 1, torch::kInt64);
+
+    return py::make_tuple(samples_tensor, ptr_tensor);
+}
+
+// TODO: Add OpenMP parallelization for batch processing
+
+// ============================================================================
+// PyBind11 Module Definition
+// ============================================================================
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("sample_batch", &sample_batch, "APX-UGS epsilon-uniform graphlet sampling",
+          py::arg("edge_index"),
+          py::arg("ptr"),
+          py::arg("m_per_graph"),
+          py::arg("k"),
+          py::arg("mode") = "sample",
+          py::arg("seed") = 42,
+          py::arg("epsilon") = 0.1);
+}
