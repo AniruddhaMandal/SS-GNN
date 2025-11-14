@@ -6,7 +6,7 @@ Profile subgraph samplers by calculating the coefficient of variation (CV) of th
 
 - **Exact k-graphlet enumeration** using optimized BFS/DFS (much faster than brute-force)
 - **Parallel enumeration** across all CPU cores
-- **Multiple sampler support**: rwr, uniform, ugs
+- **Multiple sampler support**: rwr, uniform, ugs, epsilon_uniform
 - **Multiple datasets**: PROTEINS, QM9, Peptides-func (LRGB)
 - **Comprehensive profiling**: timing, CV, coverage, frequency distributions
 
@@ -31,10 +31,11 @@ python tools/profile_sampler_cv.py
 
 ## Options
 
-- `--sampler {rwr,uniform,ugs}`: Choose which sampler to profile (default: rwr)
+- `--sampler {rwr,uniform,ugs,epsilon_uniform}`: Choose which sampler to profile (default: rwr)
 - `--k K [K ...]`: List of k values to test (e.g., `--k 4 5 6 7`)
 - `--num-samples N`: Number of subgraphs to sample per graph (default: 3000)
 - `--seed N`: Random seed for reproducibility (default: 42)
+- `--epsilon FLOAT`: Epsilon parameter for epsilon_uniform sampler (default: 0.1)
 - `--no-parallel`: Disable parallel enumeration (useful for debugging)
 
 ## Output

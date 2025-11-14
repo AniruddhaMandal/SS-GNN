@@ -47,6 +47,12 @@ try:
 except ImportError:
     pass
 
+try:
+    import epsilon_uniform_sampler
+    AVAILABLE_SAMPLERS['epsilon_uniform'] = epsilon_uniform_sampler
+except ImportError:
+    pass
+
 if not AVAILABLE_SAMPLERS:
     raise ImportError("No samplers found. Please build at least one sampler extension.")
 
@@ -198,7 +204,7 @@ def enumerate_k_graphlets_exact(edge_index: torch.Tensor, num_nodes: int, k: int
 
 def sample_subgraphs(edge_index: torch.Tensor, num_nodes: int,
                      m_samples: int, k: int,
-                     p_restart: float = 0.2, seed: int = 42) -> List[Tuple[int, ...]]:
+                     p_restart: float = 0.2, seed: int = 42, epsilon: float = 0.1) -> List[Tuple[int, ...]]:
     """
     Sample k-subgraphs using the specified sampler.
 
@@ -209,6 +215,7 @@ def sample_subgraphs(edge_index: torch.Tensor, num_nodes: int,
         k: Subgraph size
         p_restart: Restart probability (for RWR sampler only)
         seed: Random seed
+        epsilon: Approximation parameter (for epsilon_uniform sampler)
 
     Returns:
         List of sampled k-graphlets (sorted tuples of node IDs)
@@ -222,6 +229,13 @@ def sample_subgraphs(edge_index: torch.Tensor, num_nodes: int,
             SAMPLER_MODULE.sample_batch(
                 edge_index, ptr, m_per_graph=m_samples, k=k,
                 mode="sample", seed=seed, p_restart=p_restart
+            )
+    elif SAMPLER_NAME == 'epsilon_uniform':
+        # epsilon_uniform accepts epsilon parameter
+        nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_t = \
+            SAMPLER_MODULE.sample_batch(
+                edge_index, ptr, m_per_graph=m_samples, k=k,
+                mode="sample", seed=seed, epsilon=epsilon
             )
     else:
         # For uniform/ugs samplers
@@ -596,6 +610,8 @@ def main():
                         help='Number of subgraphs to sample per graph (default: 3000)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility (default: 42)')
+    parser.add_argument('--epsilon', type=float, default=0.1,
+                        help='Epsilon parameter for epsilon_uniform sampler (default: 0.1)')
     parser.add_argument('--no-parallel', action='store_true',
                         help='Disable parallel enumeration')
     args = parser.parse_args()
