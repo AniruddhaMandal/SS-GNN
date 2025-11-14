@@ -41,7 +41,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import ugs_sampler
-import uniform_sampler
+import rwr_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
@@ -132,8 +132,16 @@ class Experiment:
             self.best_metric = -float('inf')
         self.history = {"train_loss": [], "val_loss": []}
 
-        # Set subgraph sampler
-        self.sampler = uniform_sampler.sample_batch
+        # Set subgraph sampler based on config (default: ugs)
+        sampler_name = getattr(self.cfg.model_config, 'sampler', 'ugs')
+        if sampler_name == 'rwr':
+            self.sampler = rwr_sampler.sample_batch
+            self.logger.info(f"Using RWR sampler")
+        elif sampler_name == 'ugs':
+            self.sampler = ugs_sampler.sample_batch
+            self.logger.info(f"Using UGS sampler")
+        else:
+            raise ValueError(f"Unknown sampler: {sampler_name}")
 
         # Build components
         self.build()
@@ -610,15 +618,22 @@ class Experiment:
     
         k = self.cfg.model_config.subgraph_param.k
         m = self.cfg.model_config.subgraph_param.m
-    
+
         # Move to CPU for sampling (if needed by sampler)
         batch.edge_index = batch.edge_index.cpu()
         batch.ptr = batch.ptr.cpu()
-    
+
         # Perform subgraph sampling
         try:
+            print(f"\n[DEBUG] About to call {self.sampler.__module__}.{self.sampler.__name__}")
+            print(f"[DEBUG] edge_index shape: {batch.edge_index.shape}, ptr shape: {batch.ptr.shape}")
+            print(f"[DEBUG] k={k}, m={m}")
+            import time
+            t0 = time.perf_counter()
             batch.nodes_sampled, batch.edge_index_sampled, batch.edge_ptr, batch.sample_ptr, batch.edge_src_global = \
-                self.sampler(batch.edge_index, batch.ptr, m, k, mode="sample")
+                self.sampler(batch.edge_index, batch.ptr, m, k, mode="sample", seed=self.cfg.seed)
+            t_sample = time.perf_counter() - t0
+            print(f"[DEBUG] Sampling completed in {t_sample:.4f}s")
         
         except Exception as e:
             # Fallback: use placeholders if sampling fails

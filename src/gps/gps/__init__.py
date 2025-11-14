@@ -50,6 +50,7 @@ class ModelConfig:
     dropout: Optional[float] = None
     pooling: Optional[PoolingType] = None
     temperature: Optional[float] = None
+    sampler: str = "ugs"  # Which sampler to use: "rwr", "ugs", etc.
     subgraph_sampling: bool = False
     subgraph_param: SubgraphParam = field(default_factory=SubgraphParam)
     # Extra user-defined knobs

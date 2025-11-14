@@ -361,7 +361,7 @@ def test_rwr_cv_proteins(k_values=None, m_samples=3000):
     # Select a random medium-sized graph
     # Filter graphs by size
     valid_graphs = [(i, dataset[i]) for i in range(len(dataset))
-                    if 10 <= dataset[i].num_nodes <= 40]
+                    if 10 <= dataset[i].num_nodes <= 500]
 
     if len(valid_graphs) == 0:
         print("No suitable graphs found in PROTEINS dataset")
