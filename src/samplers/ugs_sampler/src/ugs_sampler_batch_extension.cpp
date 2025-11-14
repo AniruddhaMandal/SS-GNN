@@ -79,7 +79,8 @@ py::tuple sample_batch(
     const torch::Tensor& ptr,          // [num_graphs+1]
     int m_per_graph,
     int k,
-    const std::string& mode            // "sample" | "graph" | "global"
+    const std::string& mode,           // "sample" | "graph" | "global"
+    int seed                           // random seed (default 42 in header)
 ) {
     TORCH_CHECK(edge_index.device().is_cpu(), "edge_index must be on CPU");
     TORCH_CHECK(edge_index.dtype() == torch::kInt64, "edge_index must be int64");
@@ -173,7 +174,7 @@ py::tuple sample_batch(
         else { edge_mode_for_sample = "global"; base_offset = lo; }
 
         // Expect: (nodes_t_local [m,k], edge_index_t_local [2,E_gi], edge_ptr_t_local [m+1], edge_src_idx_local [E_gi])
-        py::tuple tup = sample(handle, m_per_graph, k, edge_mode_for_sample, base_offset);
+        py::tuple tup = sample(handle, m_per_graph, k, edge_mode_for_sample, base_offset, seed);
 
         torch::Tensor nodes_t_local       = tup[0].cast<torch::Tensor>();
         torch::Tensor edge_index_t_local  = tup[1].cast<torch::Tensor>();

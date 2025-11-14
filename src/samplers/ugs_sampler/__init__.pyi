@@ -12,7 +12,8 @@ def sample_batch(edge_index: torch.Tensor,
                  ptr: torch.Tensor,
                  m_per_graph: int,
                  k: int,
-                 mode: str = "sample")->Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: 
+                 mode: str = "sample",
+                 seed: int = 42)->Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: 
     """
     Sample a fixed number of subgraphs from each graph in a batched graph dataset.
 

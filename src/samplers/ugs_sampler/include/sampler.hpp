@@ -93,10 +93,10 @@ struct Preproc {
 };
 
 // Declaration for batch_extension
-py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr, int m_per_graph, int k,  const std::string &mode); 
+py::tuple sample_batch(const torch::Tensor &edge_index, const torch::Tensor &ptr, int m_per_graph, int k,  const std::string &mode, int seed = 42);
 
-// Declaretion for sampler 
-py::tuple sample(i64 handle, int m_per_graph, int k, std::string edge_mode, int64_t base_offset);
+// Declaretion for sampler
+py::tuple sample(i64 handle, int m_per_graph, int k, std::string edge_mode, int64_t base_offset, int seed = 42);
 
 // Declaretion for preproc functions  
 int64_t create_preproc(const torch::Tensor &edge_index, i64 num_nodes, int k);

@@ -93,7 +93,8 @@ py::tuple sample(
     int m,
     int k,
     std::string edge_mode,  // "local" | "flat" | "global"
-    int64_t base_offset
+    int64_t base_offset,
+    int seed
 ) {
     // Get preprocessing data
     std::shared_ptr<Preproc> P;
@@ -156,9 +157,8 @@ py::tuple sample(
 
     for (int i = 0; i < m; ++i) {
         // Create RNG for this sample
-        uint64_t seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        seed ^= (uint64_t)i * 0x9e3779b97f4a7c15ULL;  // Mix in sample index
-        ThreadRNG rng(seed);
+        uint64_t rng_seed = (uint64_t)seed + (uint64_t)i * 0x9e3779b97f4a7c15ULL;  // Mix in sample index
+        ThreadRNG rng(rng_seed);
 
         // Select root
         int root_vi;
