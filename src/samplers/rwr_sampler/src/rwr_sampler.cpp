@@ -145,6 +145,19 @@ py::tuple sample_batch(
             continue;
         }
 
+        // If graph has fewer nodes than k, emit dummy samples (nodes_t already initialized with -1)
+        if (n < k) {
+            #pragma omp critical
+            {
+                for (int s = 0; s < m_per_graph; ++s) {
+                    edge_ptr_vec.push_back(edge_ptr_vec.back());
+                    sample_idx++;
+                }
+                sample_ptr_vec.push_back(sample_idx);
+            }
+            continue;
+        }
+
         // For each sample
         for (int s = 0; s < m_per_graph; ++s) {
             // RWR sampling
@@ -158,7 +171,12 @@ py::tuple sample_batch(
             chosen_nodes.push_back(cur);
             in_set[cur] = 1;
 
-            while ((int)chosen_nodes.size() < k) {
+            // Iteration limit to prevent infinite loops on disconnected components
+            int max_iterations = n * k * 10;  // Generous limit for pathological cases
+            int iterations = 0;
+
+            while ((int)chosen_nodes.size() < k && iterations < max_iterations) {
+                iterations++;
                 double r = rng.next_double();
                 if (r < p_restart || adjs[(size_t)g][cur].empty()) {
                     cur = seed_node;
@@ -170,9 +188,17 @@ py::tuple sample_batch(
                     in_set[cur] = 1;
                     chosen_nodes.push_back(cur);
                 }
-                // In pathological cases where graph is tiny and cannot reach k distinct nodes,
-                // we will stop after attempting many times and fill with duplicates handled below.
-                // (but for typical graphs n >= k this will be fine)
+            }
+
+            // Check if sampling failed (couldn't get k distinct nodes)
+            if ((int)chosen_nodes.size() < k) {
+                // Emit dummy sample (nodes_t already initialized with -1)
+                #pragma omp critical
+                {
+                    edge_ptr_vec.push_back(edge_ptr_vec.back());
+                    sample_idx++;
+                }
+                continue;
             }
 
             // write chosen nodes into global tensor (global IDs)
