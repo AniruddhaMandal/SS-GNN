@@ -14,7 +14,6 @@
     "out_dim": 2,
     "pooling": "attention",
     "temperature": 0.5,
-    "sampler": "rwr",
     "subgraph_sampling": true,
     "subgraph_param": {
         "k": 8,
@@ -25,8 +24,8 @@
 
   "train": {
     "epochs": 150,
-    "train_batch_size": 32,
-    "val_batch_size": 32,
+    "train_batch_size": 10,
+    "val_batch_size": 10,
     "train_ratio": 0.7,
     "val_ratio": 0.15,
     "lr": 1e-3,
@@ -50,5 +49,6 @@
   "keep_last_k": 3,
 
   "use_amp": false,
-  "grad_clip": 1.0
+  "grad_clip": 1.0,
+  "sampler": "rwr"
 }

@@ -50,7 +50,6 @@ class ModelConfig:
     dropout: Optional[float] = None
     pooling: Optional[PoolingType] = None
     temperature: Optional[float] = None
-    sampler: str = "ugs"  # Which sampler to use: "rwr", "ugs", etc.
     subgraph_sampling: bool = False
     subgraph_param: SubgraphParam = field(default_factory=SubgraphParam)
     # Extra user-defined knobs
@@ -113,6 +112,9 @@ class ExperimentConfig:
     dataloader_fn: Optional[DataloaderFactory] = None
     criterion_fn: Optional[CriterionFactory] = None
     metric_fn: Optional[MetricFn] = None
+
+    # Assign sampler
+    sampler: str = "rwr"  # Which sampler to use: "rwr", "ugs", etc.
 
     def parameter_dict(self) -> dict:
         """Add params for TensorBoard hparams."""
