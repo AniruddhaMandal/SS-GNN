@@ -343,7 +343,34 @@ class SubgraphSamplingGNNClassifier(nn.Module):
                                             edge_ptr_t=edge_ptr_t,
                                             edge_src_global_t=edge_src_global_t)  # [B_total, H_dim]
 
-        global_graph_ptr = torch.repeat_interleave(torch.arange(0, num_graphs, device=device),sample_ptr_t[1:]-sample_ptr_t[:-1])
+        # Handle graphs with no valid subgraphs by adding placeholder zero embeddings
+        samples_per_graph = sample_ptr_t[1:] - sample_ptr_t[:-1]
+
+        if (samples_per_graph == 0).any():
+            # Some graphs have 0 valid subgraphs - add one zero embedding per such graph
+            zero_emb = torch.zeros(1, sample_emb.size(1), device=device)
+            new_sample_embs = []
+            new_graph_ids = []
+
+            for g in range(num_graphs):
+                num_samples = samples_per_graph[g].item()
+                if num_samples > 0:
+                    # Graph has valid subgraphs
+                    start_idx = sample_ptr_t[g]
+                    end_idx = sample_ptr_t[g + 1]
+                    new_sample_embs.append(sample_emb[start_idx:end_idx])
+                    new_graph_ids.extend([g] * num_samples)
+                else:
+                    # Graph has no valid subgraphs - add placeholder zero embedding
+                    new_sample_embs.append(zero_emb)
+                    new_graph_ids.append(g)
+
+            sample_emb = torch.cat(new_sample_embs, dim=0)
+            global_graph_ptr = torch.tensor(new_graph_ids, dtype=torch.long, device=device)
+        else:
+            # All graphs have at least one valid subgraph - normal path
+            global_graph_ptr = torch.repeat_interleave(torch.arange(0, num_graphs, device=device), samples_per_graph)
+
         graph_emb = self.aggregator(sample_emb, global_graph_ptr)  # [num_graph, H]
 
         return graph_emb

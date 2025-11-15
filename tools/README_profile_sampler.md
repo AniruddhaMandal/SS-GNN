@@ -1,4 +1,4 @@
-# Sampler Profiling Tool
+# Sampler Profiling Tool - Coefficient of Variation (CV)
 
 Profile subgraph samplers by calculating the coefficient of variation (CV) of their empirical distribution against exact k-graphlet enumeration.
 
@@ -7,36 +7,50 @@ Profile subgraph samplers by calculating the coefficient of variation (CV) of th
 - **Exact k-graphlet enumeration** using optimized BFS/DFS (much faster than brute-force)
 - **Parallel enumeration** across all CPU cores
 - **Multiple sampler support**: rwr, uniform, ugs, epsilon_uniform
-- **Multiple datasets**: PROTEINS, QM9, Peptides-func (LRGB)
+- **Multiple datasets**: PROTEINS, QM9, MUTAG, ZINC, Peptides-func (LRGB), and other TUDatasets
 - **Comprehensive profiling**: timing, CV, coverage, frequency distributions
 
 ## Usage
 
 ```bash
-# Profile RWR sampler with k=5,6,7
-python tools/profile_sampler_cv.py --sampler rwr --k 5 6 7
+# Profile RWR sampler on PROTEINS with k=5,6,7
+python tools/profile_sampler_cv.py --dataset PROTEINS --sampler rwr --k 5 6 7
 
-# Profile uniform sampler with k=6
-python tools/profile_sampler_cv.py --sampler uniform --k 6
+# Profile uniform sampler on QM9 with k=6
+python tools/profile_sampler_cv.py --dataset QM9 --sampler uniform --k 6
+
+# Profile on MUTAG with default k values (dataset-specific)
+python tools/profile_sampler_cv.py --dataset MUTAG --sampler rwr
 
 # Profile with custom number of samples and seed
-python tools/profile_sampler_cv.py --sampler rwr --k 5 6 --num-samples 5000 --seed 123
+python tools/profile_sampler_cv.py --dataset PROTEINS --sampler rwr --k 5 6 --num-samples 5000 --seed 123
 
-# Profile UGS sampler without parallel enumeration
-python tools/profile_sampler_cv.py --sampler ugs --k 5 6 --no-parallel
+# Profile UGS sampler on ZINC without parallel enumeration
+python tools/profile_sampler_cv.py --dataset ZINC --sampler ugs --k 4 5 --no-parallel
 
-# Use default settings (RWR sampler, default k values, 3000 samples, seed 42)
-python tools/profile_sampler_cv.py
+# Control graph size selection
+python tools/profile_sampler_cv.py --dataset QM9 --sampler rwr --min-nodes 15 --max-nodes 25
 ```
 
 ## Options
 
+- `--dataset NAME`: **[REQUIRED]** Dataset name (e.g., PROTEINS, QM9, MUTAG, ZINC)
 - `--sampler {rwr,uniform,ugs,epsilon_uniform}`: Choose which sampler to profile (default: rwr)
-- `--k K [K ...]`: List of k values to test (e.g., `--k 4 5 6 7`)
+- `--k K [K ...]`: List of k values to test (e.g., `--k 4 5 6 7`). Uses dataset-specific defaults if not specified
 - `--num-samples N`: Number of subgraphs to sample per graph (default: 3000)
+- `--min-nodes N`: Minimum number of nodes for graph selection (default: 10)
+- `--max-nodes N`: Maximum number of nodes for graph selection (default: 500)
+- `--max-graphlets N`: Skip sampling if exact enumeration finds more than N graphlets (default: 50000)
 - `--seed N`: Random seed for reproducibility (default: 42)
+- `--p-restart FLOAT`: Restart probability for RWR sampler (default: 0.2)
 - `--epsilon FLOAT`: Epsilon parameter for epsilon_uniform sampler (default: 0.1)
 - `--no-parallel`: Disable parallel enumeration (useful for debugging)
+
+## Dataset-Specific Default k Values
+
+- **MUTAG, ZINC**: k=[4, 5, 6]
+- **PROTEINS, QM9**: k=[5, 6, 7]
+- **Others**: k=[5, 6, 7]
 
 ## Output
 
@@ -73,15 +87,26 @@ For each k value, the tool reports:
 
 ```
 ======================================================================
-Sampler Profiling Tool: RWR
+SAMPLER CV PROFILER: RWR
 Testing CV with exact k-graphlet enumeration
+======================================================================
+Dataset: PROTEINS
 Parallel enumeration: ENABLED (8 CPUs)
-k values: [5, 6]
+k values: [5, 6, 7]
+Samples per graph: 3000
+Graph size range: 10-500 nodes
+Random seed: 42
+p_restart: 0.2
 ======================================================================
 
-TEST 2: PROTEINS Dataset
+======================================================================
+Dataset: PROTEINS
+======================================================================
+Loading PROTEINS dataset...
 Loaded 1113 graphs from PROTEINS
-Selected graph 42: Nodes: 28, Edges: 45
+
+Selected graph 42:
+  Nodes: 28, Edges: 45
 
 --- k = 5 ---
 1. Exact enumeration...
@@ -89,32 +114,32 @@ Selected graph 42: Nodes: 28, Edges: 45
    Found 145 distinct 5-graphlets
 2. RWR sampling...
    Time: 0.0312 s
-   Valid samples: 2000/2000
+   Valid samples: 2998/3000
 3. CV = 2.145327
    Unique in samples: 138
    Total distinct (exact): 145
    Coverage: 95.17%
    Frequency stats: min=1, max=285, median=12.0
    Top-5 most frequent:
-     (4, 5, 6, 17, 18): 285 (14.25%)
-     (0, 1, 10, 13, 14): 198 (9.90%)
+     (4, 5, 6, 17, 18): 285 (9.51%)
+     (0, 1, 10, 13, 14): 198 (6.61%)
      ...
    Time ratio (sampling/exact): 0.00x
 ```
 
 ## Parallel Profiling
 
-To profile multiple samplers in parallel, run them in separate terminals with different seeds:
+To profile multiple samplers in parallel, run them in separate terminals:
 
 ```bash
-# Terminal 1 - RWR sampler
-python tools/profile_sampler_cv.py --sampler rwr --k 5 6 7 --seed 42
+# Terminal 1 - RWR sampler on PROTEINS
+python tools/profile_sampler_cv.py --dataset PROTEINS --sampler rwr --k 5 6 7
 
-# Terminal 2 - Uniform sampler
-python tools/profile_sampler_cv.py --sampler uniform --k 5 6 7 --seed 43
+# Terminal 2 - Uniform sampler on PROTEINS
+python tools/profile_sampler_cv.py --dataset PROTEINS --sampler uniform --k 5 6 7
 
-# Terminal 3 - UGS sampler
-python tools/profile_sampler_cv.py --sampler ugs --k 5 6 7 --seed 44
+# Terminal 3 - Compare on different dataset (QM9)
+python tools/profile_sampler_cv.py --dataset QM9 --sampler rwr --k 5 6 7
 ```
 
 Compare the CV values to evaluate uniformity across samplers.
