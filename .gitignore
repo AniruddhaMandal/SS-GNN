@@ -1,5 +1,8 @@
 **.so
 **.pth
+**.pdf
+**.md
+**.Identifier
 
 __pycache__/
 .vscode/
