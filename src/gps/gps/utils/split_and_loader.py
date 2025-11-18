@@ -187,10 +187,10 @@ def build_dataloaders_from_dataset(dataset_or_splits, cfg: ExperimentConfig, col
     # 3) DataLoaders
     nw = int(getattr(cfg, "num_workers", 0))
     g = torch.Generator().manual_seed(cfg.seed)
-    train_loader = DataLoader(train_ds, batch_size=int(cfg.train.train_batch_size), shuffle=False,
+    train_loader = DataLoader(train_ds, batch_size=int(cfg.train.train_batch_size), shuffle=True,
                               num_workers=nw, worker_init_fn=seed_worker, generator=g, collate_fn=collate_fn, pin_memory=pin_memory)
-    val_loader   = DataLoader(val_ds,   batch_size=int(cfg.train.val_batch_size),   shuffle=False,
+    val_loader   = DataLoader(val_ds,   batch_size=int(cfg.train.val_batch_size),   shuffle=True,
                               num_workers=max(nw // 2, 0), worker_init_fn=seed_worker, generator=g,collate_fn=collate_fn, pin_memory=pin_memory)
-    test_loader  = DataLoader(test_ds,  batch_size=int(cfg.train.val_batch_size),   shuffle=False,
+    test_loader  = DataLoader(test_ds,  batch_size=int(cfg.train.val_batch_size),   shuffle=True,
                               num_workers=max(nw // 2, 0), worker_init_fn=seed_worker, generator=g, collate_fn=collate_fn, pin_memory=pin_memory)
     return train_loader, val_loader, test_loader

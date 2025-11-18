@@ -141,6 +141,10 @@ class Experiment:
             import ugs_sampler
             self.sampler = ugs_sampler.sample_batch
             self.logger.info(f"Using UGS sampler")
+        elif sampler_name == 'uniform':
+            import uniform_sampler
+            self.sampler = uniform_sampler.sample_batch
+            self.logger.info(f"Using Uniform sampler")
         else:
             raise ValueError(f"Unknown sampler: {sampler_name}")
 

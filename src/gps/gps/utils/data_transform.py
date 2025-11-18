@@ -49,6 +49,32 @@ class ClipDegreeEmbed:
             data.x = deg_emb
         return data
 
+class SetNodeFeaturesOnes:
+    def __init__(self, dim: int, cat: bool = False):
+        """
+        Set node features to all ones with specified dimension.
+
+        Parameters
+        ----------
+        dim: int
+            Dimension of the node features (all ones vector).
+        cat: bool
+            If True, concatenate ones to existing node features.
+            If False, replace existing node features with ones.
+        """
+        self.dim = dim
+        self.cat = cat
+
+    def __call__(self, data):
+        num_nodes = data.num_nodes
+        ones_features = torch.ones((num_nodes, self.dim), dtype=torch.float)
+
+        if self.cat and data.x is not None:
+            data.x = torch.cat([data.x, ones_features], dim=-1)
+        else:
+            data.x = ones_features
+        return data
+
 if __name__ == "__main__":
     transforms = Compose([ToUndirected(), ClipOneHotDegree(max_degree=512, cat=False)])  # pick a roomy cap
     dataset = TUDataset(root="data/TUDataset", name="COLLAB", transform=transforms)
