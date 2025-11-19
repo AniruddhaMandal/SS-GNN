@@ -197,6 +197,19 @@ class SubgraphFeaturesBatch:
                 setattr(self, field_name, tensor.to(device))
         return self
 
+    def __repr__(self):
+        """String representation showing variable names and tensor shapes."""
+        parts = ["SubgraphFeaturesBatch("]
+        for field_name in self.__dataclass_fields__:
+            tensor = getattr(self, field_name)
+            if tensor is not None:
+                if isinstance(tensor, torch.Tensor):
+                    parts.append(f"  {field_name}=Tensor{tuple(tensor.shape)}")
+                else:
+                    parts.append(f"  {field_name}={tensor}")
+        parts.append(")")
+        return "\n".join(parts)
+
 # ----- Minimal recursive merge helper -----
 def merge_into_dataclass(dc, src: Mapping[str, Any] | None):
     """

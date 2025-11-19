@@ -21,7 +21,7 @@ def build_synthetic(cfg: ExperimentConfig):
 
     if f_type == "all_one":
         node_dim = cfg.model_config.node_feature_dim
-        transforms = Compose([SetNodeFeaturesOnes(dim=node_dim)])
+        transforms = Compose([SetNodeFeaturesOnes(dim=node_dim,cat=False)])
     elif f_type == "one_hot_degree":
         assert max_degree is not None,  \
             "`max_degree` in model keywords. "
