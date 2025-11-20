@@ -1,8 +1,9 @@
 import torch.nn as nn
 from gps.models.head import ClassifierHead, LinkPredictorHead
+from gps.models.amplified_head import build_amplified_head
 from gps.registry import get_model
 from .registry import register_model
-from . import ExperimentConfig 
+from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
 
 @register_model('VANILLA')
@@ -47,10 +48,25 @@ class ExperimentModel(nn.Module):
                                                  score_fn=cfg.model_config.kwargs['head_score_fn'],
                                                  dropout=cfg.model_config.dropout)
         else:
-            self.model_head = ClassifierHead(in_dim=cfg.model_config.hidden_dim,
-                                             hidden_dim=cfg.model_config.hidden_dim,
-                                             num_classes=cfg.model_config.out_dim,
-                                             dropout=cfg.model_config.dropout)
+            # Check if amplified head is requested
+            head_type = cfg.model_config.kwargs.get('classifier_head_type', 'standard')
+            head_scale = cfg.model_config.kwargs.get('classifier_scale', 10.0)
+
+            if head_type == 'standard':
+                self.model_head = ClassifierHead(in_dim=cfg.model_config.hidden_dim,
+                                                 hidden_dim=cfg.model_config.hidden_dim,
+                                                 num_classes=cfg.model_config.out_dim,
+                                                 dropout=cfg.model_config.dropout)
+            else:
+                # Use amplified head
+                self.model_head = build_amplified_head(
+                    head_type=head_type,
+                    in_dim=cfg.model_config.hidden_dim,
+                    num_classes=cfg.model_config.out_dim,
+                    hidden_dim=cfg.model_config.hidden_dim,
+                    dropout=cfg.model_config.dropout,
+                    scale=head_scale
+                )
     def forward(self, batch: SubgraphFeaturesBatch):
         if self.is_link_prediction:
             encoding = self.encoder(batch)

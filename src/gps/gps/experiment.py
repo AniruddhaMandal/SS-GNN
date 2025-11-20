@@ -40,7 +40,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import ugs_sampler
 from tqdm.auto import tqdm
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
@@ -191,12 +190,13 @@ class Experiment:
         if not logger.handlers:
             logger.addHandler(ch)
 
-        from gps.wandb_writer import WandBWriter, DummyWriter
-        if self.cfg.tracker == 'False':
+        if self.cfg.tracker in ['Off', 'OFF', 'off', 'false', 'False']:
+            from gps.wandb_writer import DummyWriter
             self.writer = DummyWriter()
             return logger
         # if tracker is on initiate W&B or Tensorboard
         try:
+            from gps.wandb_writer import WandBWriter
             self.writer = WandBWriter(self.cfg)
         except ImportError:
             self.logger.info('WandB: supports wandb, `pip install wandb` and login to use.')

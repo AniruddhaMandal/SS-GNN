@@ -11,10 +11,11 @@ from .utils.split_and_loader import build_dataloaders_from_dataset
 def build_synthetic(cfg: ExperimentConfig):
     from synthetic_dataset import SyntheticGraphData
     from torch_geometric.transforms import ToUndirected, Compose
-    from .utils.data_transform import ClipOneHotDegree, ClipDegreeEmbed, SetNodeFeaturesOnes
+    from .utils.data_transform import ClipOneHotDegree, ClipDegreeEmbed, SetNodeFeaturesOnes, AddLaplacianPE
 
     f_type = cfg.model_config.kwargs.get('node_feature_type')
     max_degree = cfg.model_config.kwargs.get('max_degree')
+    lap_pe_dim = cfg.model_config.kwargs.get('lap_pe_dim', 8)  # Default 8 eigenvectors
 
     assert  f_type is not None,  \
         "for data with no feature type requires `node_feature_type` in model keywords."
@@ -22,6 +23,16 @@ def build_synthetic(cfg: ExperimentConfig):
     if f_type == "all_one":
         node_dim = cfg.model_config.node_feature_dim
         transforms = Compose([SetNodeFeaturesOnes(dim=node_dim,cat=False)])
+    elif f_type == "lap_pe":
+        # Laplacian Positional Encoding (recommended for CSL)
+        transforms = Compose([AddLaplacianPE(k=lap_pe_dim, cat=False)])
+    elif f_type == "all_one_with_lap_pe":
+        # All-one features concatenated with Laplacian PE
+        node_dim = cfg.model_config.node_feature_dim
+        transforms = Compose([
+            SetNodeFeaturesOnes(dim=node_dim, cat=False),
+            AddLaplacianPE(k=lap_pe_dim, cat=True)
+        ])
     elif f_type == "one_hot_degree":
         assert max_degree is not None,  \
             "`max_degree` in model keywords. "

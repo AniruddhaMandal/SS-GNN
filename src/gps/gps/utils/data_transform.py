@@ -75,6 +75,63 @@ class SetNodeFeaturesOnes:
             data.x = ones_features
         return data
 
+class AddLaplacianPE:
+    def __init__(self, k: int = 8, cat: bool = True):
+        """
+        Add Laplacian Positional Encoding to node features.
+
+        Computes the k smallest non-trivial eigenvectors of the graph Laplacian
+        and uses them as positional features.
+
+        Parameters
+        ----------
+        k: int
+            Number of eigenvectors to use (default: 8)
+        cat: bool
+            If True, concatenate PE to existing node features.
+            If False, replace existing node features with PE.
+        """
+        self.k = k
+        self.cat = cat
+
+    def __call__(self, data):
+        from torch_geometric.utils import get_laplacian, to_scipy_sparse_matrix
+        import scipy.sparse as sp
+        import numpy as np
+
+        num_nodes = data.num_nodes
+        edge_index = data.edge_index
+
+        # Compute Laplacian
+        edge_index_lap, edge_weight_lap = get_laplacian(
+            edge_index, normalization='sym', num_nodes=num_nodes
+        )
+
+        # Convert to scipy sparse matrix
+        L = to_scipy_sparse_matrix(edge_index_lap, edge_weight_lap, num_nodes)
+
+        # Compute eigenvectors
+        # We want k smallest eigenvalues (excluding the trivial 0 eigenvalue)
+        try:
+            eigenvalues, eigenvectors = sp.linalg.eigsh(
+                L, k=self.k + 1, which='SM', return_eigenvectors=True
+            )
+            # Skip the first eigenvector (corresponding to eigenvalue ~0)
+            pe = eigenvectors[:, 1:self.k + 1]
+        except:
+            # Fallback if eigsh fails: use random features
+            pe = np.random.randn(num_nodes, self.k) * 0.01
+
+        pe = torch.from_numpy(pe).float()
+
+        # Concatenate or replace
+        if self.cat and data.x is not None:
+            data.x = torch.cat([data.x, pe], dim=-1)
+        else:
+            data.x = pe
+
+        return data
+
 if __name__ == "__main__":
     transforms = Compose([ToUndirected(), ClipOneHotDegree(max_degree=512, cat=False)])  # pick a roomy cap
     dataset = TUDataset(root="data/TUDataset", name="COLLAB", transform=transforms)
