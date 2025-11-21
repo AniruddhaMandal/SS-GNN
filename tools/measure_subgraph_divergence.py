@@ -107,6 +107,10 @@ def compute_distribution(subgraph_list):
     counter = Counter(subgraph_list)
     total = sum(counter.values())
 
+    # Handle empty subgraph list
+    if total == 0:
+        return [], np.array([]), counter
+
     # Get all unique types
     types = sorted(counter.keys())
 
@@ -221,6 +225,27 @@ def measure_divergence(dataset_name, k, num_samples=100, method='random_walk'):
             degrees, edges = sig
             print(f"      Degrees: {degrees}, Edges: {edges}, Count: {count}")
 
+    # Check for classes with insufficient samples
+    classes_with_no_samples = [cls for cls in sorted(graphs_by_class.keys())
+                                if len(class_distributions[cls][0]) == 0]
+
+    if classes_with_no_samples:
+        print("\n" + "=" * 80)
+        print("⚠️  WARNING: INSUFFICIENT SAMPLES")
+        print("=" * 80)
+        print(f"\nThe following classes have 0 subgraphs sampled:")
+        for cls in classes_with_no_samples:
+            graph = graphs_by_class[cls][0]
+            print(f"  Class {cls}: {graph.num_nodes} nodes, {graph.edge_index.shape[1]} edges")
+        print(f"\nThis may happen when:")
+        print(f"  - Graphs are smaller than k={k}")
+        print(f"  - Graphs are disconnected or sparse (especially with method='uniform')")
+        print(f"  - max_attempts is too low")
+        print(f"\nSuggestions:")
+        print(f"  1. Use --method random_walk (less strict about connectivity)")
+        print(f"  2. Use smaller k (try k={max(3, k-2)})")
+        print(f"  3. Increase --num_samples for more attempts")
+
     # Compute pairwise JS divergences
     print("\n" + "=" * 80)
     print("JENSEN-SHANNON DIVERGENCE ANALYSIS")
@@ -239,6 +264,12 @@ def measure_divergence(dataset_name, k, num_samples=100, method='random_walk'):
             types1, probs1, _ = class_distributions[cls1]
             types2, probs2, _ = class_distributions[cls2]
 
+            # Skip if either distribution is empty
+            if len(types1) == 0 or len(types2) == 0:
+                if i < 3 and j < 3:  # Show first few
+                    print(f"  Class {cls1} vs Class {cls2}: nan (insufficient samples)")
+                continue
+
             # Align distributions
             p1, p2, _ = align_distributions(types1, probs1, types2, probs2)
 
@@ -252,10 +283,17 @@ def measure_divergence(dataset_name, k, num_samples=100, method='random_walk'):
             if i < 3 and j < 3:  # Show first few
                 print(f"  Class {cls1} vs Class {cls2}: {js_div:.6f}")
 
-    mean_div = np.mean(divergences)
-    std_div = np.std(divergences)
-    min_div = np.min(divergences)
-    max_div = np.max(divergences)
+    # Handle case where no valid divergences were computed
+    if len(divergences) == 0:
+        mean_div = np.nan
+        std_div = np.nan
+        min_div = np.nan
+        max_div = np.nan
+    else:
+        mean_div = np.mean(divergences)
+        std_div = np.std(divergences)
+        min_div = np.min(divergences)
+        max_div = np.max(divergences)
 
     print(f"\nSummary Statistics:")
     print(f"  Mean divergence: {mean_div:.6f} ± {std_div:.6f}")
@@ -267,19 +305,19 @@ def measure_divergence(dataset_name, k, num_samples=100, method='random_walk'):
     print("RECOMMENDATION FOR SS-GNN")
     print("=" * 80)
 
-    if mean_div < 0.1:
+    if np.isnan(mean_div) or mean_div < 0.1:
         verdict = "❌ POOR"
         explanation = """
 Subgraph distributions are nearly IDENTICAL across classes.
 SS-GNN theory barely applies to this dataset with k={k}.
 
 Recommendations:
-  1. Try larger k (k={k+2}, k={k+4})
+  1. Try larger k (k={k_plus_2}, k={k_plus_4})
   2. This dataset may not have discriminative k-subgraph structure
   3. Consider using vanilla GNN or other methods
 
-Expected performance: Random guessing (~{100/num_classes:.1f}%)
-""".format(k=k, num_classes=num_classes)
+Expected performance: Random guessing (~{rand_acc:.1f}%)
+""".format(k=int(k), k_plus_2=int(k)+2, k_plus_4=int(k)+4, rand_acc=100/num_classes, num_classes=num_classes)
 
     elif mean_div < 0.3:
         verdict = "⚠️  MARGINAL"
@@ -288,14 +326,14 @@ Subgraph distributions have SMALL differences.
 SS-GNN theory applies, but learning will be DIFFICULT.
 
 Recommendations:
-  1. Try larger k (k={k+2}, k={k+4}) for better discrimination
+  1. Try larger k (k={k_plus_2}, k={k_plus_4}) for better discrimination
   2. Increase hidden_dim (≥ 128) for more capacity
   3. Increase num_samples m (≥ 300) for better distribution estimation
   4. Train for many epochs (500-1000) with patience
   5. Use stronger aggregator (attention with low temperature)
 
 Expected performance: 20-40% above random
-""".format(k=k, num_classes=num_classes)
+""".format(k=int(k), k_plus_2=int(k)+2, k_plus_4=int(k)+4, num_classes=num_classes)
 
     elif mean_div < 0.5:
         verdict = "✓ MODERATE"
