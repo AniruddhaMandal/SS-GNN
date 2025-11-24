@@ -4,6 +4,7 @@
 **.md
 **.Identifier
 
+.temp/
 __pycache__/
 .vscode/
 venv/
