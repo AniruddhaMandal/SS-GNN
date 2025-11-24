@@ -1,4 +1,5 @@
 import math
+from typing import overload
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,6 +28,11 @@ def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
 
 
 class SubgraphGNNEncoder(nn.Module):
+    '''
+        Standard GNN encoder, used in SubgraphSamplingGNNClassifier with
+        support of differernt convolution type, pooling, etc.
+        Note: after sampling convert edge_index based on global node indexing
+    '''
     def __init__(self,
                  in_channels: int,
                  out_channels: int,
@@ -36,7 +42,10 @@ class SubgraphGNNEncoder(nn.Module):
                  mlp_layers: int = 4,
                  dropout: float = 0.1,
                  conv_type: str = "gine",
-                 pooling: str = "mean"):
+                 pooling: str = "mean",
+                 res_connect: bool = True,
+                 batch_norm: bool = True):
+
         super().__init__()
         conv_type = conv_type.lower()
         assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
@@ -52,6 +61,8 @@ class SubgraphGNNEncoder(nn.Module):
             self.pooling_fn = global_max_pool
         else:
             raise ValueError(f"unknown value of subgraph pooling: {pooling}")
+        self.res_connect = res_connect
+        self.batch_norm = batch_norm
 
         self.node_proj = nn.Linear(in_channels, hidden_dim)
 
@@ -66,7 +77,8 @@ class SubgraphGNNEncoder(nn.Module):
         self.bns   = nn.ModuleList()
         for layer in range(num_layers):
             self.convs.append(self._make_conv(hidden_dim, hidden_dim, mlp_layers))
-            self.bns.append(BatchNorm(hidden_dim))
+            if self.batch_norm:
+                self.bns.append(BatchNorm(hidden_dim))
 
     def _make_conv(self, in_dim, out_dim, mlp_layers):
         if self.conv_type == 'gine':
@@ -84,12 +96,20 @@ class SubgraphGNNEncoder(nn.Module):
         raise ValueError("Unknown conv_type")
 
     # ---------- FORWARD ----------
-    def forward(self, x, edge_index, batch, edge_attr=None):
+    def forward(self, 
+                x:torch.Tensor, 
+                edge_index: torch.Tensor, 
+                batch: torch.Tensor, 
+                edge_attr: torch.Tensor=None)->torch.Tensor:
         """
-        x: [N, in_channels]
-        edge_index: [2, E]
-        batch: [N]
-        edge_attr: [E, edge_dim]  (required if conv_type='gine')
+        SubgraphGNNEncoder forward pass.
+        Args:
+            x: node attribute
+            edge_index: based on global edge index
+            batch: node's parent subgraph index
+            edge_attr: edge attribute
+        Returns: 
+            [torch.Tensor]: encoding of each subgraph
         """
         h = self.node_proj(x)
         if self.use_edges:
@@ -100,9 +120,11 @@ class SubgraphGNNEncoder(nn.Module):
         for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
             h_res = h
             h = conv(h, edge_index) if not self.use_edges else conv(h, edge_index, e)
-            h = bn(h)
+            if self.batch_norm:
+                h = bn(h)
             h = F.relu(h)
-            h = h + h_res
+            if self.res_connect:
+                h = h + h_res
             if i < self.num_layers - 1:  # Skip dropout on last layer
                 h = F.dropout(h, p=self.dropout, training=self.training)
 
@@ -410,7 +432,7 @@ class SubgraphSamplingGNNClassifier(nn.Module):
         else:
             global_edge_attr = None
 
-        # convert edge index to batch(subgraph) level
+        # convert edge index to (subgraph)batch level
         global_edge_index = torch.repeat_interleave(torch.arange(0,num_subgraphs,device=device),edge_ptr_t[1:]-edge_ptr_t[:-1])*k
         global_edge_index = global_edge_index + edge_index_t
 
