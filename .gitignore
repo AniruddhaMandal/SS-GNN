@@ -19,3 +19,4 @@ cache/
 experiment_results/
 experiment_logs/
 wandb/
+tools/analysis/csl_validation.json
