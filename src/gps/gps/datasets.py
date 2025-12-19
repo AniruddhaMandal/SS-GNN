@@ -7,6 +7,7 @@ from .utils.split_and_loader import build_dataloaders_from_dataset
 @register_dataset('Clique-Detection')
 @register_dataset('Multi-Clique-Detection')
 @register_dataset('Clique-Detection-Controlled')
+@register_dataset('Sparse-Clique-Detection')
 @register_dataset('CSL')
 def build_synthetic(cfg: ExperimentConfig):
     from synthetic_dataset import SyntheticGraphData
@@ -82,6 +83,14 @@ def build_synthetic(cfg: ExperimentConfig):
                                k=4,
                                node_range=(25, 45),
                                p_base=0.08,
+                               transform=transforms)
+    elif cfg.dataset_name == 'Sparse-Clique-Detection':
+        dataset = syn_data.get(cfg.dataset_name,
+                               cache=True,
+                               num_graphs=2000,
+                               k=4,
+                               node_range=(30, 50),
+                               p_base=0.015,
                                transform=transforms)
     elif cfg.dataset_name == 'Triangle-Parity':
         # Original triangle parity dataset

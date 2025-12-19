@@ -2,6 +2,7 @@ from .triangles import ParityTriangleGraphDataset
 from .cliques import K4ParityDataset
 from .clique_detection import CliqueDetectionDataset, MultiCliqueDetectionDataset
 from .clique_detection_controlled import DensityControlledCliqueDetectionDataset
+from .sparse_clique_detection import SparseCliqueDetectionDataset
 from .csl import CSLDataset
 import os, json, hashlib, torch
 from pathlib import Path
@@ -94,6 +95,7 @@ class SyntheticGraphData:
         "Clique-Detection": CliqueDetectionDataset,
         "Multi-Clique-Detection": MultiCliqueDetectionDataset,
         "Clique-Detection-Controlled": DensityControlledCliqueDetectionDataset,
+        "Sparse-Clique-Detection": SparseCliqueDetectionDataset,
         "CSL": CSLDataset,
     })
 

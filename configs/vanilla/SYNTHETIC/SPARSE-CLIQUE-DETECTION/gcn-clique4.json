@@ -1,27 +1,20 @@
 {
-  "name": "Clique-Controlled: SS-GNN GCN",
-  "dataset_name": "Clique-Detection-Controlled",
-  "model_name": "SS-GNN",
+  "name": "Sparse-Clique-Detection: VANILLA GCN",
+  "dataset_name": "Sparse-Clique-Detection",
+  "model_name": "VANILLA",
   "task": "Binary-Classification",
 
   "model_config": {
-    "name": "ss_gnn",
+    "name": "vanilla",
     "mpnn_type": "gcn",
     "node_feature_dim": 64,
     "hidden_dim": 128,
     "mpnn_layers": 5,
     "dropout": 0.2,
     "out_dim": 2,
-    "pooling": "sum",
-    "temperature": 0.20,
-    "subgraph_sampling": true,
-    "subgraph_param": {
-        "k": 5,
-        "m": 200,
-        "pooling": "sum"
-    },
+    "pooling": "add",
     "kwargs": {
-        "node_feature_type": "degree_embed",
+        "node_feature_type": "all_one",
         "max_degree": 64
     }
   },
@@ -47,12 +40,11 @@
   "seed": 42,
   "num_workers": 4,
   "log_dir": "logs",
-  "checkpoint_dir": "checkpoints/ss-clique-controlled/",
+  "checkpoint_dir": "checkpoints/vanilla-sparse-clique/",
   "cache_dir": "cache",
   "save_every": 10,
   "keep_last_k": 3,
 
   "use_amp": true,
-  "grad_clip": 2.0,
-  "sampler": "uniform"
+  "grad_clip": 2.0
 }

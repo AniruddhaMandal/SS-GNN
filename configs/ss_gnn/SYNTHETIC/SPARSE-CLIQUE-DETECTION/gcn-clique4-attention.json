@@ -1,6 +1,6 @@
 {
-  "name": "Clique-Controlled: SS-GNN GCN",
-  "dataset_name": "Clique-Detection-Controlled",
+  "name": "Sparse-Clique-Detection: SS-GNN GCN",
+  "dataset_name": "Sparse-Clique-Detection",
   "model_name": "SS-GNN",
   "task": "Binary-Classification",
 
@@ -12,8 +12,8 @@
     "mpnn_layers": 5,
     "dropout": 0.2,
     "out_dim": 2,
-    "pooling": "sum",
-    "temperature": 0.20,
+    "pooling": "attention",
+    "temperature": 23.0,
     "subgraph_sampling": true,
     "subgraph_param": {
         "k": 5,
@@ -21,7 +21,7 @@
         "pooling": "sum"
     },
     "kwargs": {
-        "node_feature_type": "degree_embed",
+        "node_feature_type": "all_one",
         "max_degree": 64
     }
   },
@@ -47,7 +47,7 @@
   "seed": 42,
   "num_workers": 4,
   "log_dir": "logs",
-  "checkpoint_dir": "checkpoints/ss-clique-controlled/",
+  "checkpoint_dir": "checkpoints/ss-sparse-clique/",
   "cache_dir": "cache",
   "save_every": 10,
   "keep_last_k": 3,

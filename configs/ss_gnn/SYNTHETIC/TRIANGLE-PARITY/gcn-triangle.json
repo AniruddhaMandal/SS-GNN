@@ -18,7 +18,7 @@
     "subgraph_param": {
         "k": 3,
         "m": 500,
-        "pooling": "mean"
+        "pooling": "sum"
     },
     "kwargs": {
         "node_feature_type": "degree_embed",
