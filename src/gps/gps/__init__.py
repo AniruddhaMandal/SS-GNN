@@ -99,8 +99,9 @@ class ExperimentConfig:
     device: str = field(default_factory=_default_device)
     seed: int = 42
     num_workers: int = 4
-    log_dir: str = "logs"
-    checkpoint_dir: str = "checkpoints"
+    output_dir: str = "experiments"  # Base directory for all experiment outputs
+    log_dir: str = "logs"  # Will be set to {output_dir}/{name}/logs in config.py
+    checkpoint_dir: str = "checkpoints"  # Will be set to {output_dir}/{name}/checkpoints in config.py
     save_every: int = 1
     keep_last_k: int = 3
     cache_dir: Optional[str] = None

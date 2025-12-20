@@ -13,10 +13,19 @@ venv/
 build/
 data/
 graph_json_data/
+
+# Old experiment output directories (deprecated - use experiments/ instead)
 checkpoints/
 logs/
-cache/
 experiment_results/
 experiment_logs/
+
+# Organized experiment output directory
+experiments/
+
+# Archive directory (old experiments, not tracked)
+archive/
+
+cache/
 wandb/
 tools/analysis/csl_validation.json

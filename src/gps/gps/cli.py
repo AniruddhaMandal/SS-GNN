@@ -140,6 +140,18 @@ def main(argv: List[str] | None = None) -> None:
                     \n\tVal: {val_metrics:.5f}"
         print(out_str)
 
-    os.makedirs('experiment_results',exist_ok=True)
-    with open(f"experiment_results/{exp_config.name}.txt",'w') as f:
+    # Save results in the organized experiment folder
+    results_dir = os.path.join(exp_config.output_dir, exp_config.name)
+    os.makedirs(results_dir, exist_ok=True)
+
+    # Save results.txt
+    with open(os.path.join(results_dir, "results.txt"), 'w') as f:
         f.write(out_str)
+
+    # Save config.json for reproducibility
+    config_save_path = os.path.join(results_dir, "config.json")
+    with open(config_save_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+
+    print(f"\nResults saved to: {results_dir}/results.txt")
+    print(f"Config saved to: {config_save_path}")
