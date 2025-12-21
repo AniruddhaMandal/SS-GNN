@@ -1,14 +1,16 @@
 """
-Sparse Clique Detection Dataset - Maximum Separability
+Sparse Clique Detection Dataset - Maximum Separability (FIXED)
 
-Binary classification with extreme sparsity for high W-distance separation:
-- Class 0: Very sparse graphs (tree-like) with NO k-cliques
-- Class 1: Very sparse graphs + exactly ONE planted k-clique
+Binary classification testing 1-WL limitation:
+- Class 0: Tree + k(k-1)/2 random edges (NO k-cliques)
+- Class 1: Tree + exactly ONE k-clique (k(k-1)/2 edges in clique form)
 
-Key Design:
-- Base graphs are VERY sparse (p ≈ 0.01-0.02, almost tree-like)
-- Class 1 has exactly one dense k-clique substructure
-- This creates maximum distributional divergence for SS-GNN
+Key Design (FIXED Dec 2025):
+- Both classes have SAME edge count: n-1 (tree) + k(k-1)/2 edges
+- Only difference: edge ARRANGEMENT (random vs clique)
+- Prevents vanilla GNN from learning based on edge count
+- Tests true 1-WL limitation: cannot distinguish same structure with different arrangement
+- SS-GNN can distinguish via k-subgraph distributions
 """
 
 import random
@@ -81,18 +83,22 @@ class SparseCliqueDetectionDataset(Dataset):
         """
         Generate very sparse graph WITHOUT any k-cliques.
 
-        Strategy: Start with random tree, add few random edges, verify no clique.
+        Strategy: Start with random tree, add SAME number of edges as k-clique
+        (k(k-1)/2), but randomly distributed to avoid forming a clique.
+
+        This ensures SAME edge count as Class 1, preventing edge count leakage.
         """
         n = random.randint(self.min_n, self.max_n)
 
         # Start with a tree (guaranteed no k-cliques for k >= 3)
         G = nx.random_labeled_tree(n)
 
-        # Add a few random edges to make it slightly denser than a tree
-        # but still very sparse
-        num_extra_edges = int(n * self.p_base)
+        # Add the SAME number of edges as a k-clique would add
+        # This prevents vanilla GNN from learning based on edge count
+        clique_edge_count = self.k * (self.k - 1) // 2
+        num_extra_edges = clique_edge_count
         added = 0
-        max_attempts = n * 2
+        max_attempts = n * 10  # Increased attempts
 
         for _ in range(max_attempts):
             if added >= num_extra_edges:
@@ -113,27 +119,16 @@ class SparseCliqueDetectionDataset(Dataset):
         """
         Generate very sparse graph WITH exactly one k-clique.
 
-        Strategy: Create sparse base graph, then plant one k-clique.
+        Strategy: Tree + one k-clique (no other random edges).
+        This ensures SAME edge count as Class 0 (tree + k(k-1)/2 edges).
         """
         n = random.randint(self.min_n, self.max_n)
 
         # Start with a tree (very sparse base)
         G = nx.random_labeled_tree(n)
 
-        # Add a few random edges (but keep it sparse)
-        num_extra_edges = int(n * self.p_base * 0.5)  # Even sparser than class 0
-        added = 0
-
-        for _ in range(n * 2):
-            if added >= num_extra_edges:
-                break
-            u = random.randint(0, n - 1)
-            v = random.randint(0, n - 1)
-            if u != v and not G.has_edge(u, v):
-                G.add_edge(u, v)
-                added += 1
-
-        # Plant exactly ONE k-clique
+        # Plant exactly ONE k-clique (this adds k(k-1)/2 edges)
+        # No other random edges - same total count as Class 0
         if n >= self.k:
             clique_nodes = random.sample(list(G.nodes()), self.k)
             for i in range(len(clique_nodes)):
