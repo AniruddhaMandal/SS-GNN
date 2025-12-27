@@ -8,7 +8,9 @@ from . import SubgraphFeaturesBatch
 
 @register_model('VANILLA')
 def VANILLA(cfg: ExperimentConfig):
-    from gps.models.vanilla import VanillaGNNClassifier 
+    from gps.models.vanilla import VanillaGNNClassifier
+    # For node-level tasks, skip global pooling
+    pooling = 'off' if cfg.task == 'Node-Classification' else cfg.model_config.pooling
     model = VanillaGNNClassifier(in_channels=cfg.model_config.node_feature_dim,
                             edge_dim= cfg.model_config.edge_feature_dim,
                             hidden_dim=cfg.model_config.hidden_dim,
@@ -16,7 +18,7 @@ def VANILLA(cfg: ExperimentConfig):
                             num_layers=cfg.model_config.mpnn_layers,
                             dropout=cfg.model_config.dropout,
                             conv_type=cfg.model_config.mpnn_type,
-                            pooling=cfg.model_config.pooling)
+                            pooling=pooling)
     return model
 
 @register_model('SS-GNN')

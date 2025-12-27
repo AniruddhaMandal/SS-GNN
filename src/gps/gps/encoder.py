@@ -13,8 +13,9 @@ class AtomBondEncoder:
         self.bond_encoder = nn.Embedding(bond_types, bond_emb_dim) if (bond_emb_dim is not None) else None
         for p in self.atom_encoder.parameters():
             p.requires_grad = requirs_grad
-        for p in self.bond_encoder.parameters():
-            p.requires_grad = requirs_grad
+        if self.bond_encoder is not None:
+            for p in self.bond_encoder.parameters():
+                p.requires_grad = requirs_grad
         
     def __call__(self, data):
         # Encode atoms

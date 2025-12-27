@@ -26,6 +26,14 @@ def build_mae():
     metric_fn = mean_absolute_error
     return _metric_decoretor(metric_fn, 'MAE')
 
+@register_metric('F1')
+def build_f1():
+    from sklearn.metrics import f1_score
+    # Use macro averaging for multi-class F1 (as used in LRGB COCO-SP)
+    def f1_macro(y_true, y_pred):
+        return f1_score(y_true, y_pred, average='macro')
+    return _metric_decoretor(f1_macro, 'F1')
+
 @register_metric('MRR')
 def build_mrr():
     return _metric_decoretor(mean_reciprocal_rank, 'MRR')

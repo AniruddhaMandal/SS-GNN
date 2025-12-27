@@ -404,7 +404,7 @@ class Experiment:
 
             self.optimizer.zero_grad()
             with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
-                output = self.model(batch) 
+                output = self.model(batch)
                 #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
                     loss = self.criterion(output, labels.long())
@@ -413,6 +413,9 @@ class Experiment:
                 elif self.cfg.task == "Multi-Target-Regression":
                     loss = self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Class-Classification":
+                    loss = self.criterion(output, labels.long())
+                elif self.cfg.task == "Node-Classification":
+                    # Node-level classification: output is [num_nodes, num_classes], labels is [num_nodes]
                     loss = self.criterion(output, labels.long())
                 elif self.cfg.task == "Link-Prediction":
                     loss = self.criterion(output, labels)
@@ -476,7 +479,7 @@ class Experiment:
                 labels = labels.to(self.device)
 
                 with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
-                    output = self.model(batch) 
+                    output = self.model(batch)
                     #user-provided criterion must accept (outputs, labels)
                     if self.cfg.task == "Binary-Classification":
                         loss = self.criterion(output, labels.long())
@@ -485,6 +488,9 @@ class Experiment:
                     if self.cfg.task == "Multi-Target-Regression":
                         loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Class-Classification":
+                        loss = self.criterion(output, labels.long())
+                    if self.cfg.task == "Node-Classification":
+                        # Node-level classification: output is [num_nodes, num_classes], labels is [num_nodes]
                         loss = self.criterion(output, labels.long())
                     if self.cfg.task == "Link-Prediction":
                         loss = self.criterion(output, labels)
@@ -530,11 +536,15 @@ class Experiment:
                 if self.cfg.task == "Multi-Class-Classification":
                     all_preds  = all_logits.argmax(dim=-1)
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
+                if self.cfg.task == "Node-Classification":
+                    # Node-level classification: argmax over classes, then compute metrics
+                    all_preds = all_logits.argmax(dim=-1)  # [num_nodes]
+                    metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 if self.cfg.task == "Regression":
                     metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.squeeze().numpy())
                 if self.cfg.task == "Link-Prediction":
-                    metrics = self.cfg.metric_fn(all_logits, 
-                                                 all_targets, 
+                    metrics = self.cfg.metric_fn(all_logits,
+                                                 all_targets,
                                                  all_edge_label_index)
                 if self.cfg.task == "Single-Target-Regression":
                     metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.numpy())
