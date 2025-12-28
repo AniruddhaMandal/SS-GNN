@@ -164,11 +164,67 @@ def compute_subgraph_embeddings(dataset, encoder, k, m, sampler, samples_per_cla
         embeddings_by_class: Dict[class_label, List[Tensor]]
             Each tensor is [m, hidden_dim] for one graph
     """
-    # Group graphs by class
-    graphs_by_class = defaultdict(list)
+    # First pass: collect all labels to detect regression vs classification
+    import numpy as np
+    all_labels = []
+    all_graphs = []
     for graph in dataset:
         label = graph.y.item()
-        graphs_by_class[label].append(graph)
+        all_labels.append(label)
+        all_graphs.append(graph)
+
+    unique_labels = len(set(all_labels))
+    total_graphs = len(all_labels)
+
+    # Detect regression task: if >50% of graphs have unique labels, it's likely regression
+    is_regression = unique_labels > total_graphs * 0.5
+
+    if is_regression:
+        print(f"\n⚠️  Regression task detected ({unique_labels} unique values for {total_graphs} graphs)")
+        print(f"   Converting to classification by binning targets into quartiles...")
+
+        # Bin continuous targets into quartiles (4 classes)
+        labels_array = np.array(all_labels)
+        # Use quantile-based binning for balanced classes
+        quantiles = [0, 0.25, 0.5, 0.75, 1.0]
+        bins = np.quantile(labels_array, quantiles)
+
+        # Make bins unique
+        bins = np.unique(bins)
+
+        if len(bins) <= 2:
+            # If all values are the same, create uniform bins
+            min_val, max_val = labels_array.min(), labels_array.max()
+            bins = np.linspace(min_val - 0.01, max_val + 0.01, 5)
+
+        # Use digitize with right=False to include left edge, exclude right edge
+        # This ensures all values are assigned to bins 0, 1, 2, 3
+        # For bin edges: bin 0 = [bins[0], bins[1]), bin 1 = [bins[1], bins[2]), etc.
+        binned_labels = np.digitize(labels_array, bins[1:-1], right=False)
+        # digitize with bins[1:-1] returns 0 for < bins[1], 1 for [bins[1], bins[2]), etc.
+        # Values >= bins[-1] will be in the last bin
+
+        # Ensure all values are in valid range [0, num_bins-1]
+        num_bins = len(bins) - 1
+        binned_labels = np.clip(binned_labels, 0, num_bins - 1)
+
+        print(f"   Created {len(np.unique(binned_labels))} bins:")
+        for i in range(num_bins):
+            count = np.sum(binned_labels == i)
+            bin_min = bins[i]
+            bin_max = bins[i+1]
+            print(f"     Bin {i}: [{bin_min:.3f}, {bin_max:.3f}{')'if i < num_bins-1 else ']'} - {count} graphs")
+
+        # Group graphs by binned class
+        graphs_by_class = defaultdict(list)
+        for graph, binned_label in zip(all_graphs, binned_labels):
+            graphs_by_class[int(binned_label)].append(graph)
+    else:
+        # Classification task - use original labels
+        graphs_by_class = defaultdict(list)
+        for graph in all_graphs:
+            label = graph.y.item()
+            graphs_by_class[label].append(graph)
 
     print(f"\nDataset statistics:")
     print(f"  Total graphs: {len(dataset)}")
@@ -433,22 +489,54 @@ def main():
 
     # Load dataset
     print(f"\nLoading dataset: {args.dataset}")
-    from gps.datasets import build_synthetic
     from gps import ExperimentConfig, ModelConfig, TrainConfig
+    from gps.registry import get_dataset, list_datasets
+    import gps.datasets  # Import to trigger registrations
 
     # Create dummy config for dataset loading
     cfg = ExperimentConfig()
     cfg.dataset_name = args.dataset
     cfg.model_config = ModelConfig()
     cfg.model_config.node_feature_dim = 5
-    cfg.model_config.kwargs = {'node_feature_type': 'all_one'}
+    cfg.model_config.kwargs = {'node_feature_type': 'all_one', 'max_degree': 64}
     cfg.train = TrainConfig()
     cfg.cache_dir = 'cache'
     cfg.seed = 42
 
-    # Load dataset
-    train_loader, val_loader, test_loader = build_synthetic(cfg)
-    dataset = train_loader.dataset
+    # Load dataset using the registry
+    try:
+        dataset_build_fn = get_dataset(args.dataset)
+    except Exception as e:
+        available = list(list_datasets())
+        raise ValueError(f"Dataset '{args.dataset}' not found. Available datasets: {available}") from e
+
+    loaders = dataset_build_fn(cfg)
+
+    # Handle different return formats
+    if len(loaders) == 3:
+        train_loader, val_loader, test_loader = loaders
+    elif len(loaders) == 2:
+        train_loader, val_loader = loaders
+        test_loader = None
+    else:
+        train_loader = loaders[0]
+        val_loader = test_loader = None
+
+    # Use all data (train + val + test) for analysis
+    all_data = []
+    if train_loader:
+        all_data.extend(train_loader.dataset)
+    if val_loader and hasattr(val_loader, 'dataset'):
+        all_data.extend(val_loader.dataset)
+    if test_loader and hasattr(test_loader, 'dataset'):
+        all_data.extend(test_loader.dataset)
+
+    # Create combined dataset
+    from torch.utils.data import ConcatDataset
+    if len(all_data) > 0:
+        dataset = all_data if isinstance(all_data, list) else ConcatDataset(all_data)
+    else:
+        dataset = train_loader.dataset
 
     # Get feature dimension
     sample = dataset[0]
