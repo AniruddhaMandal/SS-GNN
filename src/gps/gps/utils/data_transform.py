@@ -54,6 +54,9 @@ class SetNodeFeaturesOnes:
         """
         Set node features to all ones with specified dimension.
 
+        Automatically handles dimension mismatches from caching by always
+        ensuring the output has the correct dimension.
+
         Parameters
         ----------
         dim: int
@@ -69,10 +72,15 @@ class SetNodeFeaturesOnes:
         num_nodes = data.num_nodes
         ones_features = torch.ones((num_nodes, self.dim), dtype=torch.float)
 
-        if self.cat and data.x is not None:
+        # Always replace with correct dimension when not concatenating
+        # This handles caching issues where cached features may have wrong dim
+        if not self.cat:
+            data.x = ones_features
+        elif data.x is not None:
             data.x = torch.cat([data.x, ones_features], dim=-1)
         else:
             data.x = ones_features
+
         return data
 
 class AddLaplacianPE:

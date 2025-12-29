@@ -1,0 +1,59 @@
+{
+  "name": "CSL: SS-GNN-WL (k=6, GIN, Frozen WL)",
+  "dataset_name": "CSL",
+  "model_name": "SS-GNN-WL",
+  "task": "Multi-Class-Classification",
+
+  "model_config": {
+    "name": "ss_gnn_wl",
+    "mpnn_type": "gin",
+    "node_feature_dim": 5,
+    "edge_feature_dim": 1,
+    "hidden_dim": 64,
+    "mpnn_layers": 5,
+    "dropout": 0.0,
+    "out_dim": 10,
+    "pooling": "mean",
+    "temperature": 0.20,
+    "subgraph_sampling": true,
+    "subgraph_param": {
+      "k": 6,
+      "m": 100,
+      "pooling": "sum"
+    },
+    "kwargs": {
+      "node_feature_type": "all_one",
+      "wl_vocab_path": "wl_vocabs/csl_k6.pkl",
+      "wl_dim": 64,
+      "use_node_features_in_wl": false,
+      "wl_iterations": 3
+    }
+  },
+
+  "train": {
+    "epochs": 100,
+    "train_batch_size": 10,
+    "val_batch_size": 10,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "lr": 0.001,
+    "weight_decay": 1e-5,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 20
+    },
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC"
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 0,
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints/ss-csl-k6-wl/",
+  "cache_dir": "cache",
+  "sampler": "uniform",
+  "use_amp": false,
+  "tracker": "wandb"
+}

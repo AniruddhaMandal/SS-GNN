@@ -203,7 +203,10 @@ class SyntheticGraphData:
                 return loaded
             if isinstance(loaded, list):
                 if self.use_inmemory_wrapper:
-                    return ListAsInMemoryDataset(loaded)
+                    # Pass transform to apply it when accessing data
+                    # This handles cases where cache was created with different transform
+                    transform = constructor_kwargs.get('transform', None)
+                    return ListAsInMemoryDataset(loaded, transform=transform)
                 else:
                     # wrap as minimal object that has __len__ and __getitem__
                     return loaded  # type: ignore

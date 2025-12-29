@@ -29,3 +29,6 @@ archive/
 cache/
 wandb/
 tools/analysis/csl_validation.json
+
+# Vocabulary data preprocessing
+wl_vocabs
