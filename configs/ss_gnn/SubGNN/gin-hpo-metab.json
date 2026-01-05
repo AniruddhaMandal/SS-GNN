@@ -1,0 +1,55 @@
+{
+    "name": "SS-GNN: HPO-METAB GIN (k=6, m=100)",
+    "dataset_name": "HPO-METAB",
+    "model_name": "SS-GNN",
+    "task": "Multi-Class-Classification",
+
+    "model_config": {
+        "name": "ss_gnn",
+        "mpnn_type": "gin",
+        "node_feature_dim": 1,
+        "hidden_dim": 64,
+        "mpnn_layers": 4,
+        "dropout": 0.1,
+        "out_dim": 6,
+        "pooling": "sum",
+        "temperature": 0.5,
+        "subgraph_sampling": true,
+        "subgraph_param": {
+            "k": 6,
+            "m": 100,
+            "pooling": "mean"
+        },
+        "kwargs": {
+            "node_feature_type": "all_one"
+        }
+    },
+
+    "train": {
+        "epochs": 100,
+        "train_batch_size": 32,
+        "val_batch_size": 32,
+        "lr": 1e-3,
+        "weight_decay": 1e-5,
+        "optimizer": "adam",
+        "scheduler": {
+            "type": "reduce_on_plateau",
+            "patience": 20
+        },
+        "loss_fn": "CrossEntropyLoss",
+        "metric": "ACC"
+    },
+
+    "device": "cuda",
+    "seed": 42,
+    "num_workers": 4,
+    "log_dir": "logs",
+    "checkpoint_dir": "checkpoints",
+    "cache_dir": "cache",
+    "save_every": 1,
+    "keep_last_k": 3,
+
+    "use_amp": false,
+    "grad_clip": 2.0,
+    "sampler": "epsilon_uniform"
+}
