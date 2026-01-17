@@ -14,6 +14,8 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
@@ -76,9 +78,24 @@ class GraphletAnalyzer:
         print("Building graphlet count matrix...")
         self.wl_vocab, self.graphlet_matrix, self.labels = self._build_graphlet_matrix()
 
+        # Detect multi-class (for single-label with >2 classes)
+        if not self.is_multilabel:
+            self.unique_classes = np.unique(self.labels)
+            self.num_classes = len(self.unique_classes)
+            self.is_multiclass = self.num_classes > 2
+        else:
+            self.unique_classes = None
+            self.num_classes = self.num_labels
+            self.is_multiclass = False
+
         print(f"✓ Found {len(self.wl_vocab)} unique graphlet types")
         print(f"✓ Processed {len(self.labels)} graphs")
-        print(f"✓ Labels: {np.unique(self.labels)}\n")
+        if self.is_multilabel:
+            print(f"✓ Task: Multi-label ({self.num_labels} labels)")
+        elif self.is_multiclass:
+            print(f"✓ Task: Multi-class ({self.num_classes} classes: {self.unique_classes})")
+        else:
+            print(f"✓ Task: Binary classification (classes: {self.unique_classes})")
 
     def _load_dataset(self):
         """Load dataset using GPS infrastructure."""
@@ -151,18 +168,21 @@ class GraphletAnalyzer:
                             # Single label per graph
                             label = batch.y[i].item()
                         elif batch.y.dim() == 2 and batch.y.shape[1] > 1:
-                            # Multi-label: convert to single label by taking first positive or majority
-                            # For now, skip multi-label datasets
-                            print(f"\n⚠ Warning: {self.dataset_name} is multi-label (shape: {batch.y.shape})")
-                            print("Multi-label classification not yet supported by this tool.")
-                            print("Recommendation: Analyze per-label separately or use regression datasets.")
-                            raise ValueError(f"Multi-label classification not supported. Dataset has {batch.y.shape[1]} labels.")
+                            # Multi-label: store full label vector
+                            label = batch.y[i].cpu().numpy()
                         else:
                             label = batch.y[i].item()
 
                         self.all_labels.append(label)
 
-            print(f"✓ Loaded {len(self.all_labels)} graphs from {self.dataset_name}")
+            # Detect multi-label
+            self.is_multilabel = isinstance(self.all_labels[0], np.ndarray)
+            if self.is_multilabel:
+                self.num_labels = self.all_labels[0].shape[0]
+                print(f"✓ Loaded {len(self.all_labels)} graphs from {self.dataset_name} (multi-label: {self.num_labels} labels)")
+            else:
+                self.num_labels = 1
+                print(f"✓ Loaded {len(self.all_labels)} graphs from {self.dataset_name}")
 
         except Exception as e:
             print(f"Error loading dataset: {e}")
@@ -235,7 +255,13 @@ class GraphletAnalyzer:
                         counter[wl_hash] += 1
 
                     graphlet_counts_list.append(counter)
-                    labels.append(batch.y[graph_idx].item() if batch.y.dim() > 0 else batch.y.item())
+                    # Handle multi-label vs single-label
+                    if batch.y.dim() == 2 and batch.y.shape[1] > 1:
+                        labels.append(batch.y[graph_idx].cpu().numpy())
+                    elif batch.y.dim() > 0:
+                        labels.append(batch.y[graph_idx].item())
+                    else:
+                        labels.append(batch.y.item())
 
             except Exception as e:
                 print(f"\nError sampling batch {batch_idx}: {e}")
@@ -252,12 +278,24 @@ class GraphletAnalyzer:
                 j = wl_vocab[wl_hash]
                 matrix[i, j] = count
 
-        return wl_vocab, matrix, np.array(labels)
+        # Normalize to proportions (each row sums to 1)
+        # This converts raw counts to "X% of this graph's subgraphs are type Y"
+        row_sums = matrix.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1  # Avoid division by zero
+        matrix = matrix / row_sums
+
+        # Convert labels to appropriate array format
+        if self.is_multilabel:
+            labels_array = np.stack(labels)  # Shape: [num_graphs, num_labels]
+        else:
+            labels_array = np.array(labels)  # Shape: [num_graphs]
+
+        return wl_vocab, matrix, labels_array
 
     # ========== Level 1: Statistical Analysis ==========
 
     def compute_statistics(self):
-        """Compute presence rate, avg count per graphlet per class."""
+        """Compute presence rate, avg proportion per graphlet per class."""
         num_classes = len(np.unique(self.labels))
         stats = []
 
@@ -265,7 +303,8 @@ class GraphletAnalyzer:
         id_to_hash = {v: k for k, v in self.wl_vocab.items()}
 
         for graphlet_idx in range(self.graphlet_matrix.shape[1]):
-            counts = self.graphlet_matrix[:, graphlet_idx]
+            # Note: graphlet_matrix contains proportions (normalized), not raw counts
+            proportions = self.graphlet_matrix[:, graphlet_idx]
             wl_hash = id_to_hash.get(graphlet_idx, f"unknown_{graphlet_idx}")
 
             row = {
@@ -275,69 +314,67 @@ class GraphletAnalyzer:
 
             for c in range(num_classes):
                 class_mask = self.labels == c
-                class_counts = counts[class_mask]
+                class_proportions = proportions[class_mask]
 
-                row[f'presence_rate_c{c}'] = np.mean(class_counts > 0)
-                row[f'avg_count_c{c}'] = np.mean(class_counts)
-                row[f'std_count_c{c}'] = np.std(class_counts)
-                row[f'max_count_c{c}'] = np.max(class_counts)
+                row[f'presence_rate_c{c}'] = np.mean(class_proportions > 0)
+                row[f'avg_proportion_c{c}'] = np.mean(class_proportions)
+                row[f'std_proportion_c{c}'] = np.std(class_proportions, ddof=1)
+                row[f'max_proportion_c{c}'] = np.max(class_proportions)
 
             stats.append(row)
 
         return pd.DataFrame(stats)
 
-    def test_significance(self):
-        """Statistical tests for each graphlet."""
+    def _test_significance_binary(self, binary_labels, label_name=None):
+        """Statistical tests for each graphlet against a binary label."""
         results = []
 
         # Reverse vocab for lookup
         id_to_hash = {v: k for k, v in self.wl_vocab.items()}
 
-        # Get unique classes
-        unique_classes = np.unique(self.labels)
-
-        if len(unique_classes) != 2:
-            print(f"Warning: Currently only supports binary classification. Found {len(unique_classes)} classes.")
-            # For multi-class, use first two classes
-            c0, c1 = unique_classes[0], unique_classes[1]
-        else:
-            c0, c1 = unique_classes[0], unique_classes[1]
+        # Number of tests for Bonferroni correction
+        num_tests = self.graphlet_matrix.shape[1]
+        bonferroni_threshold = 0.05 / num_tests
 
         for graphlet_idx in range(self.graphlet_matrix.shape[1]):
-            counts = self.graphlet_matrix[:, graphlet_idx]
+            proportions = self.graphlet_matrix[:, graphlet_idx]
             wl_hash = id_to_hash.get(graphlet_idx, f"unknown_{graphlet_idx}")
 
-            # Separate by class
-            class_0_counts = counts[self.labels == c0]
-            class_1_counts = counts[self.labels == c1]
+            # Separate by binary label (0 vs 1)
+            class_0_props = proportions[binary_labels == 0]
+            class_1_props = proportions[binary_labels == 1]
 
-            # Skip if no variation
-            if np.std(counts) < 1e-6:
+            # Skip if no variation or empty groups
+            if len(class_0_props) == 0 or len(class_1_props) == 0:
+                continue
+            if np.std(proportions) < 1e-6:
                 continue
 
             # Mann-Whitney U test
             try:
-                stat, p_value = mannwhitneyu(class_0_counts, class_1_counts, alternative='two-sided')
+                stat, p_value = mannwhitneyu(class_0_props, class_1_props, alternative='two-sided')
             except:
                 p_value = 1.0
 
-            # Effect size (Cohen's d)
-            mean_0 = np.mean(class_0_counts)
-            mean_1 = np.mean(class_1_counts)
+            # Effect size (Cohen's d) using sample variance (ddof=1)
+            mean_0 = np.mean(class_0_props)
+            mean_1 = np.mean(class_1_props)
             mean_diff = mean_1 - mean_0
 
-            pooled_std = np.sqrt((np.var(class_0_counts) + np.var(class_1_counts)) / 2)
+            pooled_std = np.sqrt((np.var(class_0_props, ddof=1) + np.var(class_1_props, ddof=1)) / 2)
             cohens_d = mean_diff / (pooled_std + 1e-8)
 
             # Presence difference
-            presence_0 = np.mean(class_0_counts > 0)
-            presence_1 = np.mean(class_1_counts > 0)
+            presence_0 = np.mean(class_0_props > 0)
+            presence_1 = np.mean(class_1_props > 0)
             presence_diff = presence_1 - presence_0
 
-            results.append({
+            row = {
                 'graphlet_id': graphlet_idx,
                 'wl_hash': wl_hash[:16] + "...",
                 'p_value': p_value,
+                'p_value_corrected': p_value * num_tests,
+                'bonferroni_threshold': bonferroni_threshold,
                 'cohens_d': cohens_d,
                 'effect_size': 'large' if abs(cohens_d) > 0.8 else ('medium' if abs(cohens_d) > 0.5 else 'small'),
                 'mean_class_0': mean_0,
@@ -345,11 +382,66 @@ class GraphletAnalyzer:
                 'presence_class_0': presence_0,
                 'presence_class_1': presence_1,
                 'presence_diff': presence_diff,
-                'discriminative': p_value < 0.05 and abs(cohens_d) > 0.5
-            })
+                'discriminative': p_value < bonferroni_threshold and abs(cohens_d) > 0.5
+            }
 
-        df = pd.DataFrame(results).sort_values('p_value')
-        return df
+            if label_name is not None:
+                row['label'] = label_name
+
+            results.append(row)
+
+        return results
+
+    def test_significance(self, label_idx=None):
+        """Statistical tests for each graphlet.
+
+        Args:
+            label_idx: For multi-label, analyze only this label index.
+                       If None, analyzes all labels (multi-label) or the single label.
+
+        Returns:
+            DataFrame with significance results. For multi-label, includes 'label' column.
+        """
+        if self.is_multilabel:
+            # Multi-label: run per-label binary analysis
+            if label_idx is not None:
+                # Analyze single label
+                binary_labels = self.labels[:, label_idx].astype(int)
+                results = self._test_significance_binary(binary_labels, label_name=f"label_{label_idx}")
+            else:
+                # Analyze all labels
+                results = []
+                for l_idx in range(self.num_labels):
+                    binary_labels = self.labels[:, l_idx].astype(int)
+                    results.extend(self._test_significance_binary(binary_labels, label_name=f"label_{l_idx}"))
+
+            df = pd.DataFrame(results)
+            if len(df) > 0:
+                df = df.sort_values(['label', 'p_value'] if 'label' in df.columns else 'p_value')
+            return df
+        elif self.is_multiclass:
+            # Multi-class: One-vs-Rest analysis for each class
+            results = []
+            for c in self.unique_classes:
+                # Binary labels: 1 if class == c, 0 otherwise (class c vs rest)
+                binary_labels = (self.labels == c).astype(int)
+                class_results = self._test_significance_binary(binary_labels, label_name=f"class_{int(c)}")
+                results.extend(class_results)
+
+            df = pd.DataFrame(results)
+            if len(df) > 0:
+                df = df.sort_values(['label', 'p_value'] if 'label' in df.columns else 'p_value')
+            return df
+        else:
+            # Binary classification
+            c0, c1 = self.unique_classes[0], self.unique_classes[1]
+
+            # Convert to binary (0 vs 1)
+            binary_labels = (self.labels == c1).astype(int)
+            results = self._test_significance_binary(binary_labels)
+
+            df = pd.DataFrame(results).sort_values('p_value')
+            return df
 
     # ========== Visualization ==========
 
@@ -388,10 +480,10 @@ class GraphletAnalyzer:
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.savefig(save_path, format='svg', bbox_inches='tight')
             print(f"✓ Heatmap saved to {save_path}")
 
-        plt.show()
+        plt.close()
 
     def plot_count_distributions(self, top_k=5, save_path=None):
         """Violin plots for top-k discriminative graphlets."""
@@ -409,31 +501,31 @@ class GraphletAnalyzer:
             axes = [axes]
 
         for i, graphlet_idx in enumerate(top_graphlets):
-            counts = self.graphlet_matrix[:, graphlet_idx]
+            proportions = self.graphlet_matrix[:, graphlet_idx]
 
             data = pd.DataFrame({
-                'Count': counts,
+                'Proportion': proportions,
                 'Class': [f'Class {int(label)}' for label in self.labels]
             })
 
-            sns.violinplot(data=data, x='Class', y='Count', ax=axes[i], palette='Set2')
+            sns.violinplot(data=data, x='Class', y='Proportion', hue='Class', ax=axes[i], palette='Set2', legend=False)
 
             # Add stats
             p_val = sig_df[sig_df['graphlet_id'] == graphlet_idx]['p_value'].values[0]
             cohens_d = sig_df[sig_df['graphlet_id'] == graphlet_idx]['cohens_d'].values[0]
 
             axes[i].set_title(f'Graphlet {graphlet_idx}\np={p_val:.4f}, d={cohens_d:.2f}')
-            axes[i].set_ylabel('Count' if i == 0 else '')
+            axes[i].set_ylabel('Proportion' if i == 0 else '')
 
         plt.suptitle(f'Top {top_k} Discriminative Graphlet Distributions\n{self.dataset_name} (k={self.k})',
                      fontsize=14, y=1.02)
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.savefig(save_path, format='svg', bbox_inches='tight')
             print(f"✓ Distribution plot saved to {save_path}")
 
-        plt.show()
+        plt.close()
 
     # ========== Level 4: Predictive Baseline ==========
 
@@ -575,23 +667,78 @@ class GraphletAnalyzer:
         print(f"Graphlet types: {len(self.wl_vocab)}")
         print(f"k-graphlet size: {self.k}")
         print(f"Samples per graph: {self.m}")
-        print(f"Classes: {np.unique(self.labels)}")
+
+        if self.is_multilabel:
+            print(f"Task: Multi-label classification ({self.num_labels} labels)")
+        elif self.is_multiclass:
+            print(f"Task: Multi-class classification ({self.num_classes} classes)")
+            print(f"Classes: {self.unique_classes}")
+        else:
+            print(f"Task: Binary classification")
+            print(f"Classes: {self.unique_classes}")
 
         # Statistical tests
         sig_df = self.test_significance()
-        num_discriminative = sig_df['discriminative'].sum()
+
+        # Get Bonferroni threshold from the results
+        bonferroni_threshold = sig_df['bonferroni_threshold'].iloc[0] if len(sig_df) > 0 else 0.05
 
         print(f"\n{'='*80}")
         print("STATISTICAL SIGNIFICANCE")
         print("="*80)
-        print(f"Discriminative graphlets (p<0.05, |d|>0.5): {num_discriminative}/{len(sig_df)}")
+
+        if self.is_multilabel:
+            # Multi-label: show per-label summary
+            print(f"Analysis: Per-label binary classification")
+            print(f"Bonferroni-corrected threshold: p < {bonferroni_threshold:.6f}")
+            print(f"\nDiscriminative graphlets per label:")
+
+            for label_idx in range(self.num_labels):
+                label_df = sig_df[sig_df['label'] == f'label_{label_idx}']
+                num_disc = label_df['discriminative'].sum()
+                total = len(label_df)
+                print(f"  Label {label_idx}: {num_disc}/{total} discriminative")
+
+            num_discriminative = sig_df['discriminative'].sum()
+            total_tests = len(sig_df)
+            print(f"\nTotal: {num_discriminative}/{total_tests} discriminative (across all labels)")
+        elif self.is_multiclass:
+            # Multi-class: show per-class summary (One-vs-Rest)
+            print(f"Analysis: One-vs-Rest (each class vs all others)")
+            print(f"Bonferroni-corrected threshold: p < {bonferroni_threshold:.6f}")
+            print(f"\nDiscriminative graphlets per class:")
+
+            for c in self.unique_classes:
+                class_df = sig_df[sig_df['label'] == f'class_{int(c)}']
+                num_disc = class_df['discriminative'].sum()
+                total = len(class_df)
+                print(f"  Class {int(c)}: {num_disc}/{total} discriminative")
+
+            num_discriminative = sig_df['discriminative'].sum()
+            total_tests = len(sig_df)
+            print(f"\nTotal: {num_discriminative}/{total_tests} discriminative (across all classes)")
+        else:
+            num_discriminative = sig_df['discriminative'].sum()
+            print(f"Number of tests (graphlet types): {len(sig_df)}")
+            print(f"Bonferroni-corrected threshold: p < {bonferroni_threshold:.6f} (0.05/{len(sig_df)})")
+            print(f"Discriminative graphlets (p<{bonferroni_threshold:.6f}, |d|>0.5): {num_discriminative}/{len(sig_df)}")
 
         if num_discriminative > 0:
             print(f"\n{'='*80}")
             print("TOP 10 DISCRIMINATIVE GRAPHLETS")
             print("="*80)
-            print(sig_df[['graphlet_id', 'p_value', 'cohens_d', 'effect_size',
-                          'mean_class_0', 'mean_class_1', 'presence_diff']].head(10).to_string(index=False))
+
+            # Select columns based on task type
+            cols = ['graphlet_id', 'p_value', 'p_value_corrected', 'cohens_d', 'effect_size',
+                    'mean_class_0', 'mean_class_1', 'presence_diff']
+            if self.is_multilabel or self.is_multiclass:
+                cols = ['label'] + cols
+
+            top_disc = sig_df[sig_df['discriminative']].head(10)
+            if len(top_disc) > 0:
+                print(top_disc[cols].to_string(index=False))
+            else:
+                print(sig_df[cols].head(10).to_string(index=False))
 
             # Interpretation
             print(f"\n{'='*80}")
@@ -599,7 +746,6 @@ class GraphletAnalyzer:
             print("="*80)
 
             avg_effect_size = sig_df.head(10)['cohens_d'].abs().mean()
-            avg_p_value = sig_df.head(10)['p_value'].mean()
 
             if num_discriminative > 10 and avg_effect_size > 1.0:
                 print("✓ STRONG SIGNAL: Many graphlets with large effect sizes")
@@ -630,22 +776,28 @@ class GraphletAnalyzer:
             sig_df.to_csv(sig_path, index=False)
             print(f"\n✓ Significance analysis saved to {sig_path}")
 
-            # Save statistics table
-            stats_df = self.compute_statistics()
-            stats_path = os.path.join(output_dir, 'graphlet_statistics.csv')
-            stats_df.to_csv(stats_path, index=False)
-            print(f"✓ Graphlet statistics saved to {stats_path}")
+            # Save statistics table (only for binary classification)
+            if not self.is_multilabel and not self.is_multiclass:
+                stats_df = self.compute_statistics()
+                stats_path = os.path.join(output_dir, 'graphlet_statistics.csv')
+                stats_df.to_csv(stats_path, index=False)
+                print(f"✓ Graphlet statistics saved to {stats_path}")
 
-            # Save visualizations
-            heatmap_path = os.path.join(output_dir, 'heatmap.png')
-            self.plot_heatmap(top_k=20, save_path=heatmap_path)
+            # Save visualizations (only for binary classification)
+            if not self.is_multilabel and not self.is_multiclass:
+                heatmap_path = os.path.join(output_dir, 'heatmap.svg')
+                self.plot_heatmap(top_k=20, save_path=heatmap_path)
 
-            dist_path = os.path.join(output_dir, 'distributions.png')
-            self.plot_count_distributions(top_k=5, save_path=dist_path)
+                dist_path = os.path.join(output_dir, 'distributions.svg')
+                self.plot_count_distributions(top_k=5, save_path=dist_path)
+            elif self.is_multilabel:
+                print("(Visualizations skipped for multi-label datasets)")
+            elif self.is_multiclass:
+                print("(Visualizations skipped for multi-class datasets)")
 
-        # Level 4: Predictive Baseline
+        # Level 4: Predictive Baseline (only for binary classification)
         predictive_results = None
-        if include_predictive:
+        if include_predictive and not self.is_multilabel and not self.is_multiclass:
             predictive_results = self.evaluate_predictive_baselines(cv_folds=5)
 
             # Compare to statistical significance
@@ -674,6 +826,10 @@ class GraphletAnalyzer:
                     with open(comp_path, 'w') as f:
                         json.dump(comparison, f, indent=2)
                     print(f"✓ Significance comparison saved to {comp_path}")
+        elif include_predictive and self.is_multilabel:
+            print("\n(Predictive baseline skipped for multi-label datasets)")
+        elif include_predictive and self.is_multiclass:
+            print("\n(Predictive baseline skipped for multi-class datasets)")
 
         print(f"\n{'='*80}")
         print("END OF ANALYSIS")
