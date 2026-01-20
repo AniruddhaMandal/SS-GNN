@@ -520,7 +520,10 @@ class Experiment:
                 output = self.model(batch)
                 #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
-                    loss = self.criterion(output, labels.long())
+                    # BCEWithLogitsLoss needs float targets and matching shapes
+                    if output.dim() > 1 and output.shape[-1] == 1:
+                        output = output.squeeze(-1)  # [B, 1] -> [B]
+                    loss = self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Lable-Binary-Classification":
                     loss = self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Target-Regression":
@@ -595,7 +598,10 @@ class Experiment:
                     output = self.model(batch)
                     #user-provided criterion must accept (outputs, labels)
                     if self.cfg.task == "Binary-Classification":
-                        loss = self.criterion(output, labels.long())
+                        # BCEWithLogitsLoss needs float targets and matching shapes
+                        if output.dim() > 1 and output.shape[-1] == 1:
+                            output = output.squeeze(-1)  # [B, 1] -> [B]
+                        loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Lable-Binary-Classification":
                         loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Target-Regression":
@@ -642,8 +648,17 @@ class Experiment:
                     all_probs = torch.sigmoid(all_logits)
                     metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
                 if self.cfg.task == "Binary-Classification":
-                    all_preds = torch.argmax(all_logits, dim=1)   # [B]
-                    metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
+                    # For ROCAUC, we need scores not predictions
+                    if self.cfg.train.metric == "ROCAUC":
+                        # Handle both out_dim=1 (single logit) and out_dim=2 (two logits)
+                        if all_logits.dim() == 1 or all_logits.shape[-1] == 1:
+                            all_scores = all_logits.squeeze()  # [B]
+                        else:
+                            all_scores = all_logits[:, 1]  # Take positive class score
+                        metrics = self.cfg.metric_fn(all_targets.numpy(), all_scores.numpy())
+                    else:
+                        all_preds = torch.argmax(all_logits, dim=1)   # [B]
+                        metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
                 if self.cfg.task == "Multi-Target-Regression":
                     metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.numpy())
                 if self.cfg.task == "Multi-Class-Classification":

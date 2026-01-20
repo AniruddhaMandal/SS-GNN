@@ -34,6 +34,20 @@ def build_f1():
         return f1_score(y_true, y_pred, average='macro')
     return _metric_decoretor(f1_macro, 'F1')
 
+@register_metric('ROCAUC')
+def build_rocauc():
+    from sklearn.metrics import roc_auc_score
+    def rocauc(y_true, y_pred):
+        """
+        ROC-AUC for binary classification.
+        y_pred can be logits or probabilities - roc_auc_score handles both.
+        """
+        # Flatten if needed
+        y_true = np.asarray(y_true).ravel()
+        y_pred = np.asarray(y_pred).ravel()
+        return roc_auc_score(y_true, y_pred)
+    return _metric_decoretor(rocauc, 'ROCAUC')
+
 @register_metric('MRR')
 def build_mrr():
     return _metric_decoretor(mean_reciprocal_rank, 'MRR')
