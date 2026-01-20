@@ -94,6 +94,9 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument('--override', '-o', nargs='*', default=[],
                         help='Override config values, e.g. train.lr=0.01 model.hidden_dim=128')
+    parser.add_argument('--presample', '-p',
+                        action='store_true',
+                        help='Presample subgraphs once before training for computational speed.')
     args = parser.parse_args(argv)
 
     cfg_path = _resolve_config_path(args.config)
@@ -105,6 +108,10 @@ def main(argv: List[str] | None = None) -> None:
         cfg = apply_overrides(cfg, args.override)
 
     exp_config = set_config(cfg)
+
+    # Set presample flag from CLI
+    if args.presample:
+        exp_config.presample = True
 
     if args.multi_seed:
         print(f"Running experiment with multiple seeds: {args.seeds}")

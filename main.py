@@ -49,6 +49,9 @@ if __name__ == "__main__":
                         help='Custom list of seeds to use when --multi-seed is set.')
     parser.add_argument('--override', '-o', nargs='*', default=[],
                         help='Override config values, e.g. train.lr=0.01 model.hidden_dim=128')
+    parser.add_argument('--presample', '-p',
+                        action='store_true',
+                        help='Presample subgraphs once before training for computational speed.')
     args = parser.parse_args()
 
     # Load and set config
@@ -59,6 +62,10 @@ if __name__ == "__main__":
         cfg = apply_overrides(cfg, args.override)
 
     exp_config = set_config(cfg)
+
+    # Set presample flag from CLI
+    if args.presample:
+        exp_config.presample = True
 
     if args.multi_seed:
         print(f"Running experiment with multiple seeds: {args.seeds}")

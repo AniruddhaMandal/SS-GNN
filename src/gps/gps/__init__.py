@@ -117,6 +117,9 @@ class ExperimentConfig:
     # Assign sampler
     sampler: str = "rwr"  # Which sampler to use: "rwr", "ugs", etc.
 
+    # Presampling option (set via CLI --presample flag)
+    presample: bool = False  # If True, presample subgraphs once before training for speed
+
     def parameter_dict(self) -> dict:
         """Add params for TensorBoard hparams."""
         items =[ 
@@ -177,6 +180,7 @@ class SubgraphFeaturesBatch:
     
     # ============ Optional standard features ============
     edge_attr: Optional[torch.Tensor] = None  # [num_edges, edge_dim] Edge attributes
+    ptr: Optional[torch.Tensor] = None        # [num_graphs+1] Node pointer for batched graphs
     
     # ============ Subgraph sampling features ============
     # Present only when subgraph_sampling=True
@@ -189,6 +193,11 @@ class SubgraphFeaturesBatch:
     # ============ Link prediction features ============
     # Present only for link prediction tasks
     edge_label_index: Optional[torch.Tensor] = None   # [2, num_pred_edges] Edges to predict
+
+    # ============ Graph index for presampling ============
+    # Used to track which original graphs are in a batch (for presample cache lookup)
+    graph_idx: Optional[torch.Tensor] = None  # [num_graphs] Original dataset indices
+    split_id: Optional[torch.Tensor] = None   # [num_graphs] Split identifier (0=train, 1=val, 2=test)
     
     def to(self, device: torch.device):
         """Move all tensors to the specified device."""

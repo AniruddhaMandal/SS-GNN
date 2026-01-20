@@ -55,6 +55,36 @@ def running_in_vscode_debug():
 if running_in_vscode_debug():
     warnings.simplefilter("error", UserWarning)
 
+
+# ------- Indexed Dataset Wrapper for Presampling -------
+class IndexedDatasetWrapper:
+    """Wrapper that adds graph_idx and split_id to each Data object for presample cache lookup.
+
+    This wrapper adds the dataset index and split identifier to each Data object so that
+    during batching, we know which original graphs are in the batch and can
+    look up their presampled subgraphs from the correct split's cache.
+    """
+
+    def __init__(self, base_dataset, split_id: int):
+        """
+        Args:
+            base_dataset: The underlying PyG dataset
+            split_id: Integer identifier for the split (0=train, 1=val, 2=test)
+        """
+        self.base = base_dataset
+        self.split_id = split_id
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        data = self.base[idx]
+        # Add graph index and split_id for cache lookup during training
+        data.graph_idx = torch.tensor([idx], dtype=torch.long)
+        data.split_id = torch.tensor([self.split_id], dtype=torch.long)
+        return data
+
+
 # ------- Experiment class -------
 
 class Experiment:
@@ -280,6 +310,11 @@ class Experiment:
         else:
             raise NotImplementedError("Provide cfg.dataloader_fn(cfg) returning dataloaders")
 
+        # Presampling setup (if enabled)
+        self.presample_cache = None
+        if getattr(self.cfg, 'presample', False) and self.cfg.model_config.subgraph_sampling:
+            self._setup_presampling()
+
         # optimizer
         self.logger.info("→ Building optimizer...")
         self.optimizer = self._build_optimizer()
@@ -332,6 +367,84 @@ class Experiment:
         else:
             self.logger.warning("Unknown scheduler type: %s", s.type)
         return sch
+
+    def _setup_presampling(self):
+        """Set up presampling: wrap datasets with IndexedDatasetWrapper and build cache."""
+        from torch_geometric.loader import DataLoader as PyGDataLoader
+
+        k = self.cfg.model_config.subgraph_param.k
+        m = self.cfg.model_config.subgraph_param.m
+
+        self.logger.info(f"→ Setting up presampling (k={k}, m={m})...")
+
+        # Build presample cache for each split
+        self.presample_cache = {'train': {}, 'val': {}, 'test': {}}
+
+        datasets_info = [
+            ("train", self.train_loader.dataset),
+            ("val", self.val_loader.dataset),
+        ]
+        if self.test_loader is not None:
+            datasets_info.append(("test", self.test_loader.dataset))
+
+        total_presampled = 0
+        total_failed = 0
+
+        for split_name, dataset in datasets_info:
+            self.logger.info(f"  Presampling {split_name} set ({len(dataset)} graphs)...")
+
+            for i in tqdm(range(len(dataset)), desc=f"  {split_name}", ncols=80, leave=False):
+                data = dataset[i]
+
+                # Create ptr tensor for single graph
+                num_nodes = data.num_nodes
+                ptr = torch.tensor([0, num_nodes], dtype=torch.long)
+
+                # Use varying seed per graph for diversity
+                graph_seed = self.cfg.seed + total_presampled
+
+                try:
+                    nodes_t, edge_index_t, edge_ptr_t, sample_ptr_t, edge_src_t = \
+                        self.sampler(data.edge_index, ptr, m, k,
+                                   mode="sample", seed=graph_seed)
+
+                    # Store in cache - these are already in the correct format for a single graph
+                    self.presample_cache[split_name][i] = {
+                        'nodes': nodes_t.clone(),           # [m, k] node indices
+                        'edge_index': edge_index_t.clone(), # [2, E] already adjusted for samples
+                        'edge_ptr': edge_ptr_t.clone(),     # [m+1] edge pointers
+                        'edge_src': edge_src_t.clone(),     # [E] original edge indices
+                    }
+                    total_presampled += 1
+                except Exception as e:
+                    self.presample_cache[split_name][i] = None
+                    total_failed += 1
+                    total_presampled += 1
+
+        if total_failed > 0:
+            self.logger.warning(f"  ⚠ {total_failed} graphs failed presampling")
+        self.logger.info(f"  ✓ Presampled {total_presampled - total_failed}/{total_presampled} graphs")
+
+        # Wrap dataloaders to add graph_idx and split_id
+        self.train_loader = self._wrap_loader_with_index(self.train_loader, 0)  # 0 = train
+        self.val_loader = self._wrap_loader_with_index(self.val_loader, 1)      # 1 = val
+        if self.test_loader is not None:
+            self.test_loader = self._wrap_loader_with_index(self.test_loader, 2)  # 2 = test
+
+    def _wrap_loader_with_index(self, loader, split_id: int):
+        """Wrap dataloader with IndexedDatasetWrapper to add graph_idx and split_id."""
+        from torch_geometric.loader import DataLoader as PyGDataLoader
+
+        wrapped_dataset = IndexedDatasetWrapper(loader.dataset, split_id)
+
+        return PyGDataLoader(
+            wrapped_dataset,
+            batch_size=loader.batch_size,
+            shuffle=(split_id == 0),  # Only shuffle train (split_id=0)
+            num_workers=loader.num_workers,
+            pin_memory=loader.pin_memory,
+            drop_last=loader.drop_last
+        )
 
     # ---------- Training / evaluation ----------
     def train(self):
@@ -617,8 +730,13 @@ class Experiment:
         # load sample features
         if self.cfg.model_config.subgraph_sampling:
             sf_batch.ptr = batch.ptr
+            # Pass graph_idx and split_id for presample cache lookup (if available)
+            if hasattr(batch, 'graph_idx'):
+                sf_batch.graph_idx = batch.graph_idx
+            if hasattr(batch, 'split_id'):
+                sf_batch.split_id = getattr(batch, 'split_id', None)
             sf_batch = self._sample_and_load_subgraphs(sf_batch)
-        
+
         return (sf_batch, labels)
 
 
@@ -630,27 +748,133 @@ class Experiment:
                 "Subgraph parameters required in config. "
                 "Please set cfg.model_config.subgraph_param with 'k' and 'm' values."
             )
-    
+
         k = self.cfg.model_config.subgraph_param.k
         m = self.cfg.model_config.subgraph_param.m
+
+        # Check if we can use presample cache
+        if self.presample_cache is not None and batch.graph_idx is not None:
+            return self._load_from_presample_cache(batch, k, m)
 
         # Move to CPU for sampling (if needed by sampler)
         batch.edge_index = batch.edge_index.cpu()
         batch.ptr = batch.ptr.cpu()
 
-        # Perform subgraph sampling
+        # Perform subgraph sampling on-the-fly
         try:
             batch.nodes_sampled, batch.edge_index_sampled, batch.edge_ptr, batch.sample_ptr, batch.edge_src_global = \
                 self.sampler(batch.edge_index, batch.ptr, m, k, mode="sample", seed=self.cfg.seed)
-        
+
         except Exception as e:
             # Fallback: use placeholders if sampling fails
             self.logger.warning(f"\nSubgraph sampler failed, using placeholders: {e}")
-        
+
             num_graphs = int(batch.batch.max().item()) + 1
             batch.nodes_sampled, batch.edge_index_sampled, batch.edge_ptr, batch.sample_ptr, batch.edge_src_global = \
                 self._make_placeholders(num_graphs, m, k)
-        
+
+        return batch
+
+    def _load_from_presample_cache(self, batch: SubgraphFeaturesBatch, k: int, m: int) -> SubgraphFeaturesBatch:
+        """Load presampled subgraphs from cache and combine them for the batch.
+
+        This reconstructs the same output format as the on-the-fly sampler:
+        - nodes_sampled: [total_samples, k] with GLOBAL node indices
+        - edge_index_sampled: [2, total_edges] with adjusted indices for batched samples
+        - edge_ptr: [total_samples + 1] cumulative edge counts
+        - sample_ptr: [num_graphs + 1] cumulative sample counts
+        - edge_src_global: [total_edges] original edge indices in batched graph
+        """
+        graph_indices = batch.graph_idx.cpu().flatten().tolist()
+        num_graphs = len(graph_indices)
+        ptr = batch.ptr.cpu()
+
+        # Get split from split_id (0=train, 1=val, 2=test)
+        split_id = batch.split_id[0].item() if batch.split_id is not None else None
+        split_map = {0: 'train', 1: 'val', 2: 'test'}
+        split_name = split_map.get(split_id)
+
+        if split_name is None or split_name not in self.presample_cache:
+            # Cache miss - fall back to on-the-fly sampling
+            batch.edge_index = batch.edge_index.cpu()
+            batch.ptr = batch.ptr.cpu()
+            batch.nodes_sampled, batch.edge_index_sampled, batch.edge_ptr, batch.sample_ptr, batch.edge_src_global = \
+                self.sampler(batch.edge_index, batch.ptr, m, k, mode="sample", seed=self.cfg.seed)
+            return batch
+
+        cache = self.presample_cache[split_name]
+
+        # Collect presampled data for each graph
+        all_nodes = []
+        all_edges = []
+        all_edge_src = []
+        edge_ptr_list = [0]
+        sample_ptr_list = [0]
+
+        cumulative_node_offset = 0
+        cumulative_edge_offset = 0
+        cumulative_sample_offset = 0
+
+        # Compute original graph edge offsets for edge_src adjustment
+        orig_edge_offsets = [0]
+        for g in range(num_graphs - 1):
+            node_start = ptr[g].item()
+            node_end = ptr[g + 1].item()
+            edge_mask = (batch.edge_index[0] >= node_start) & (batch.edge_index[0] < node_end)
+            orig_edge_offsets.append(orig_edge_offsets[-1] + edge_mask.sum().item())
+
+        for g_idx, orig_idx in enumerate(graph_indices):
+            ps_data = cache.get(orig_idx)
+
+            if ps_data is None:
+                # This graph failed presampling - use placeholders for it
+                nodes_g = torch.full((m, k), -1, dtype=torch.long)
+                edges_g = torch.empty((2, 0), dtype=torch.long)
+                edge_ptr_g = torch.zeros(m + 1, dtype=torch.long)
+                edge_src_g = torch.empty(0, dtype=torch.long)
+            else:
+                nodes_g = ps_data['nodes']        # [m, k]
+                edges_g = ps_data['edge_index']   # [2, E_g]
+                edge_ptr_g = ps_data['edge_ptr']  # [m+1]
+                edge_src_g = ps_data['edge_src']  # [E_g]
+
+            n_samples = nodes_g.shape[0]
+            n_edges = edges_g.shape[1]
+
+            # Adjust node indices: add cumulative node offset from batched graph
+            node_offset = ptr[g_idx].item()
+            nodes_adjusted = nodes_g + node_offset
+
+            # DO NOT adjust edge indices - the model does this itself!
+            # The sampler returns LOCAL indices [0, k-1] per sample
+            # The model adds sample offsets in encode_subgraphs (lines 436-437)
+            edges_adjusted = edges_g  # Keep as-is
+
+            # Adjust edge_src: add original graph's edge offset
+            edge_src_adjusted = edge_src_g + orig_edge_offsets[g_idx]
+
+            # Collect
+            all_nodes.append(nodes_adjusted)
+            all_edges.append(edges_adjusted)
+            all_edge_src.append(edge_src_adjusted)
+
+            # Build edge_ptr entries (offset by cumulative edge count)
+            for i in range(n_samples):
+                edge_ptr_list.append(cumulative_edge_offset + edge_ptr_g[i + 1].item())
+
+            # Update cumulative counters
+            cumulative_node_offset += ptr[g_idx + 1].item() - ptr[g_idx].item()
+            cumulative_edge_offset += n_edges
+            cumulative_sample_offset += n_samples
+            sample_ptr_list.append(cumulative_sample_offset)
+
+        # Concatenate all
+        batch.nodes_sampled = torch.cat(all_nodes, dim=0)  # [total_samples, k]
+        batch.edge_index_sampled = torch.cat(all_edges, dim=1) if all_edges else torch.empty((2, 0), dtype=torch.long)
+        batch.edge_ptr = torch.tensor(edge_ptr_list, dtype=torch.long)
+        batch.sample_ptr = torch.tensor(sample_ptr_list, dtype=torch.long)
+        batch.edge_src_global = torch.cat(all_edge_src, dim=0) if all_edge_src else torch.empty(0, dtype=torch.long)
+
         return batch
 
     def _get_batch_size(self, batch):

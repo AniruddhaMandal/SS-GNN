@@ -140,6 +140,7 @@ class AddLaplacianPE:
 
         return data
 
+
 if __name__ == "__main__":
     transforms = Compose([ToUndirected(), ClipOneHotDegree(max_degree=512, cat=False)])  # pick a roomy cap
     dataset = TUDataset(root="data/TUDataset", name="COLLAB", transform=transforms)

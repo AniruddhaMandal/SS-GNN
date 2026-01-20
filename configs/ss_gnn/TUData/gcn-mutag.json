@@ -17,8 +17,8 @@
         "temperature": 0.5,
         "subgraph_sampling": true,
         "subgraph_param": {
-            "k": 5,
-            "m": 5000,
+            "k": 6,
+            "m": 500,
             "pooling": "mean"
         }
 
@@ -51,5 +51,5 @@
 
     "use_amp": false,
     "grad_clip": 2.0,
-    "sampler": "ugs"
+    "sampler": "uniform"
 }
