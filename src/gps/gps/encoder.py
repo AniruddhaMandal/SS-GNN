@@ -38,6 +38,89 @@ class AtomBondEncoder:
             data.edge_attr = self.bond_encoder(ea)
         return data
 
+class OGBAtomEncoder:
+    """
+    Transform: Categorical atom features -> summed embeddings.
+
+    Converts 9 categorical atom features to dense embeddings.
+    Each feature has its own embedding table, outputs are summed.
+
+    OGB standard atom feature dimensions:
+        0: atomic_num (119 values)
+        1: chirality (4 values)
+        2: degree (11 values)
+        3: formal_charge (11 values)
+        4: num_hs (9 values)
+        5: num_radical_e (5 values)
+        6: hybridization (5 values)
+        7: is_aromatic (2 values)
+        8: is_in_ring (2 values)
+    """
+
+    ATOM_FEATURE_DIMS = [119, 4, 11, 11, 9, 5, 5, 2, 2]
+
+    def __init__(self, emb_dim: int = 64, requires_grad: bool = False):
+        self.emb_dim = emb_dim
+        self.requires_grad = requires_grad
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(num_classes, emb_dim)
+            for num_classes in self.ATOM_FEATURE_DIMS
+        ])
+        for emb in self.embeddings:
+            emb.weight.requires_grad = requires_grad
+
+    def __call__(self, data):
+        x = data.x  # [num_atoms, 9] categorical integers
+        if x.dim() == 1:
+            x = x.unsqueeze(-1)
+
+        embedded = sum(
+            self.embeddings[i](x[:, i].clamp(0, self.ATOM_FEATURE_DIMS[i] - 1))
+            for i in range(min(x.size(1), len(self.embeddings)))
+        )
+        data.x = embedded  # [num_atoms, emb_dim]
+        return data
+
+
+class OGBBondEncoder:
+    """
+    Transform: Categorical bond features -> summed embeddings.
+
+    Converts 3 categorical bond features to dense embeddings.
+    Each feature has its own embedding table, outputs are summed.
+
+    OGB standard bond feature dimensions:
+        0: bond_type (5 values)
+        1: stereo (6 values)
+        2: is_conjugated (2 values)
+    """
+
+    BOND_FEATURE_DIMS = [5, 6, 2]
+
+    def __init__(self, emb_dim: int = 64, requires_grad: bool = False):
+        self.emb_dim = emb_dim
+        self.requires_grad = requires_grad
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(num_classes, emb_dim)
+            for num_classes in self.BOND_FEATURE_DIMS
+        ])
+        for emb in self.embeddings:
+            emb.weight.requires_grad = requires_grad
+
+    def __call__(self, data):
+        if data.edge_attr is not None and data.edge_attr.numel() > 0:
+            edge_attr = data.edge_attr  # [num_edges, 3]
+            if edge_attr.dim() == 1:
+                edge_attr = edge_attr.unsqueeze(-1)
+
+            embedded = sum(
+                self.embeddings[i](edge_attr[:, i].clamp(0, self.BOND_FEATURE_DIMS[i] - 1))
+                for i in range(min(edge_attr.size(1), len(self.embeddings)))
+            )
+            data.edge_attr = embedded  # [num_edges, emb_dim]
+        return data
+
+
 class FilterTarget:
     def __init__(self, target_idx):
         self.target_idx = target_idx

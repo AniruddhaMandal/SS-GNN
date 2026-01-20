@@ -138,6 +138,7 @@ class GraphletAnalyzer:
             ),
             device="cpu",
             seed=self.seed,
+            num_workers=0,  # Disable multiprocessing to avoid file descriptor issues
             sampler=self.sampler_name,
             cache_dir="./cache",
             output_dir="./experiments"

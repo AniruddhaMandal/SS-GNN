@@ -259,3 +259,35 @@ def build_subgnn(cfg: ExperimentConfig):
 
     # Return as tuple for build_dataloaders_from_dataset
     return build_dataloaders_from_dataset((train_dataset, test_dataset, val_dataset), cfg)
+
+@register_dataset('ogbg-molhiv')
+@register_dataset('molhiv')
+def build_molhiv(cfg: ExperimentConfig):
+    """
+    Build OGB-MolHIV dataset.
+
+    Uses RDKit for SMILES-to-graph conversion with OGB-style features.
+    Scaffold splitting (80/10/10) is applied.
+
+    Task: Binary classification (HIV activity prediction)
+    Metric: ROC-AUC
+    """
+    from .dataset_loaders.molhiv import MolHIVDataset
+    from .encoder import OGBAtomEncoder, OGBBondEncoder
+    from torch_geometric.transforms import Compose
+
+    emb_dim = cfg.model_config.node_feature_dim
+    edge_emb_dim = getattr(cfg.model_config, 'edge_feature_dim', None) or emb_dim
+
+    transforms = Compose([
+        OGBAtomEncoder(emb_dim=emb_dim),
+        OGBBondEncoder(emb_dim=edge_emb_dim),
+    ])
+
+    dataset = MolHIVDataset(
+        root='./data/OGB/molhiv',
+        transform=transforms
+    )
+
+    # Dataset has get_idx_split() - will be used automatically by build_dataloaders_from_dataset
+    return build_dataloaders_from_dataset(dataset, cfg)
