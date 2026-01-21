@@ -520,10 +520,14 @@ class Experiment:
                 output = self.model(batch)
                 #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
-                    # BCEWithLogitsLoss needs float targets and matching shapes
-                    if output.dim() > 1 and output.shape[-1] == 1:
-                        output = output.squeeze(-1)  # [B, 1] -> [B]
-                    loss = self.criterion(output, labels.float())
+                    # CrossEntropyLoss needs long targets, BCEWithLogitsLoss needs float
+                    if isinstance(self.criterion, torch.nn.CrossEntropyLoss):
+                        loss = self.criterion(output, labels.long())
+                    else:
+                        # BCEWithLogitsLoss needs float targets and matching shapes
+                        if output.dim() > 1 and output.shape[-1] == 1:
+                            output = output.squeeze(-1)  # [B, 1] -> [B]
+                        loss = self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Lable-Binary-Classification":
                     loss = self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Target-Regression":
@@ -598,10 +602,14 @@ class Experiment:
                     output = self.model(batch)
                     #user-provided criterion must accept (outputs, labels)
                     if self.cfg.task == "Binary-Classification":
-                        # BCEWithLogitsLoss needs float targets and matching shapes
-                        if output.dim() > 1 and output.shape[-1] == 1:
-                            output = output.squeeze(-1)  # [B, 1] -> [B]
-                        loss = self.criterion(output, labels.float())
+                        # CrossEntropyLoss needs long targets, BCEWithLogitsLoss needs float
+                        if isinstance(self.criterion, torch.nn.CrossEntropyLoss):
+                            loss = self.criterion(output, labels.long())
+                        else:
+                            # BCEWithLogitsLoss needs float targets and matching shapes
+                            if output.dim() > 1 and output.shape[-1] == 1:
+                                output = output.squeeze(-1)  # [B, 1] -> [B]
+                            loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Lable-Binary-Classification":
                         loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Multi-Target-Regression":
