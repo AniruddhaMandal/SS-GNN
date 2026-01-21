@@ -9,13 +9,20 @@ class WandBWriter:
         self.wandb = wandb
         run_dir = os.path.join(cfg.log_dir, cfg.name)
 
-        self.run = wandb.init(
-            project='SS-GNN',
-            name=cfg.name,
-            config=cfg.parameter_dict(),
-            dir=run_dir,
-            tags=[cfg.dataset_name, cfg.model_name, cfg.model_config.mpnn_type]
-        )
+        # Check if wandb is already initialized (e.g., from a sweep agent)
+        if wandb.run is not None:
+            # Already initialized by sweep agent, just update config
+            self.run = wandb.run
+            wandb.config.update(cfg.parameter_dict(), allow_val_change=True)
+        else:
+            # Normal initialization
+            self.run = wandb.init(
+                project='SS-GNN',
+                name=cfg.name,
+                config=cfg.parameter_dict(),
+                dir=run_dir,
+                tags=[cfg.dataset_name, cfg.model_name, cfg.model_config.mpnn_type]
+            )
 
     def add_scalar(self, tag, value, step=None):
         self.wandb.log({tag: value}, step=step)

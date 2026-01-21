@@ -1,0 +1,30 @@
+# Phase 2.1: k sweep (subgraph size)
+# Fixed: m=64, temperature=1.0
+program: sweep_runner.py
+method: grid
+project: SS-GNN-Phase2-MUTAG
+name: phase2.1-k-sweep
+
+parameters:
+  base_config:
+    value: configs/ss_gnn/TUData/gcn-mutag.json
+
+  # Variable: k (subgraph size)
+  model_config.subgraph_param.k:
+    values: [3, 4, 5, 6, 7]
+
+  # Fixed parameters
+  model_config.subgraph_param.m:
+    value: 64
+  model_config.temperature:
+    value: 1.0
+  model_config.pooling:
+    value: attention
+  train.epochs:
+    value: 30
+  presample:
+    value: true
+
+metric:
+  name: final_test_acc
+  goal: maximize

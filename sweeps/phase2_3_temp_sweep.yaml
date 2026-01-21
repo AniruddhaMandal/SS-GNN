@@ -1,0 +1,33 @@
+# Phase 2.3: temperature sweep (attention sharpness)
+# Fixed: k=best_from_phase1, m=best_from_phase2
+# NOTE: Update k and m values after Phase 2.1 and 2.2 results
+program: sweep_runner.py
+method: grid
+project: SS-GNN-Phase2-MUTAG
+name: phase2.3-temp-sweep
+
+parameters:
+  base_config:
+    value: configs/ss_gnn/TUData/gcn-mutag.json
+
+  # Fixed: k and m (update after Phase 2.1 and 2.2)
+  model_config.subgraph_param.k:
+    value: 6
+  model_config.subgraph_param.m:
+    value: 64
+
+  # Variable: temperature
+  model_config.temperature:
+    values: [0.1, 0.5, 1.0, 2.0, 5.0]
+
+  # Fixed parameters
+  model_config.pooling:
+    value: attention
+  train.epochs:
+    value: 30
+  presample:
+    value: true
+
+metric:
+  name: final_test_acc
+  goal: maximize

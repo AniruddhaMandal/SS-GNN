@@ -1,0 +1,33 @@
+# Phase 2.2: m sweep (sample count)
+# Fixed: k=best_from_phase1 (default 6), temperature=1.0
+# NOTE: Update k value after Phase 2.1 results
+program: sweep_runner.py
+method: grid
+project: SS-GNN-Phase2-MUTAG
+name: phase2.2-m-sweep
+
+parameters:
+  base_config:
+    value: configs/ss_gnn/TUData/gcn-mutag.json
+
+  # Fixed: k (update this after Phase 2.1)
+  model_config.subgraph_param.k:
+    value: 6
+
+  # Variable: m (sample count)
+  model_config.subgraph_param.m:
+    values: [16, 32, 64, 128, 256]
+
+  # Fixed parameters
+  model_config.temperature:
+    value: 1.0
+  model_config.pooling:
+    value: attention
+  train.epochs:
+    value: 30
+  presample:
+    value: true
+
+metric:
+  name: final_test_acc
+  goal: maximize

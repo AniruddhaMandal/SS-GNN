@@ -1,0 +1,36 @@
+program: sweep_runner.py
+method: grid
+project: SS-GNN-Phase2-MUTAG
+
+parameters:
+  # Base config path
+  base_config:
+    value: configs/ss_gnn/TUData/gcn-mutag.json
+
+  # Phase 2.1: k sweep (subgraph size)
+  model_config.subgraph_param.k:
+    values: [3, 4, 5, 6, 7]
+
+  # Phase 2.2: m sweep (sample count)
+  model_config.subgraph_param.m:
+    values: [16, 32, 64, 128, 256]
+
+  # Phase 2.3: temperature sweep (attention sharpness)
+  model_config.temperature:
+    values: [0.1, 0.5, 1.0, 2.0, 5.0]
+
+  # Fixed parameters
+  train.epochs:
+    value: 30
+
+  # Use attention pooling
+  model_config.pooling:
+    value: attention
+
+  # Enable presampling
+  presample:
+    value: true
+
+metric:
+  name: test_acc
+  goal: maximize
