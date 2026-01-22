@@ -141,6 +141,8 @@ def build_lrgb(cfg: ExperimentConfig):
 @register_dataset('COLLAB')
 @register_dataset('IMDB-BINARY')
 @register_dataset('REDDIT-BINARY')
+@register_dataset('PTC_MR')
+@register_dataset('AIDS')
 def build_tudata(cfg: ExperimentConfig):
     from torch_geometric.datasets import TUDataset
     from torch_geometric.transforms import ToUndirected, Compose
@@ -290,4 +292,41 @@ def build_molhiv(cfg: ExperimentConfig):
     )
 
     # Dataset has get_idx_split() - will be used automatically by build_dataloaders_from_dataset
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
+@register_dataset('BBBP')
+def build_bbbp(cfg: ExperimentConfig):
+    """
+    Build BBBP (Blood-Brain Barrier Penetration) dataset from MoleculeNet.
+
+    Task: Binary classification
+    Size: ~2039 molecules
+    Node features: 9 (atom features from RDKit)
+    """
+    from torch_geometric.datasets import MoleculeNet
+    from torch_geometric.transforms import ToUndirected, Compose
+
+    transforms = Compose([ToUndirected()])
+    dataset = MoleculeNet(root='data/MoleculeNet', name='BBBP', transform=transforms)
+
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
+@register_dataset('Tox21')
+def build_tox21(cfg: ExperimentConfig):
+    """
+    Build Tox21 dataset from MoleculeNet.
+
+    Task: Multi-label binary classification (12 toxicity assays)
+    Size: ~7831 molecules
+    Node features: 9 (atom features from RDKit)
+    Note: Labels contain NaN values for missing assays
+    """
+    from torch_geometric.datasets import MoleculeNet
+    from torch_geometric.transforms import ToUndirected, Compose
+
+    transforms = Compose([ToUndirected()])
+    dataset = MoleculeNet(root='data/MoleculeNet', name='Tox21', transform=transforms)
+
     return build_dataloaders_from_dataset(dataset, cfg)
