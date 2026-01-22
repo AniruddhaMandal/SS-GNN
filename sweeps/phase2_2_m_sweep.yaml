@@ -10,7 +10,6 @@ parameters:
   base_config:
     value: configs/ss_gnn/TUData/gcn-mutag.json
 
-  # Fixed: k (update this after Phase 2.1)
   model_config.subgraph_param.k:
     value: 6
 
