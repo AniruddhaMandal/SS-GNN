@@ -40,7 +40,7 @@
   "device": "cuda",
   "seed": 42,
   "num_workers": 4,
-  "log_dir": "logs/phase1",
+  "log_dir": "logs",
   "checkpoint_dir": "checkpoints",
   "cache_dir": "cache",
   "save_every": 10,
