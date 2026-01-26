@@ -1,7 +1,7 @@
 {
-    "name":"SS-GNN-WL: MUTAG GCN (attention pooling)",
+    "name":"SubgraphSampling: MUTAG SS GCN (sum-sum)",
     "dataset_name": "MUTAG",
-    "model_name": "SS-GNN-WL",
+    "model_name": "SS-GNN",
     "task": "Binary-Classification",
 
     "model_config": 
@@ -13,19 +13,13 @@
         "mpnn_layers": 4,
         "dropout": 0.1,
         "out_dim": 2,
-        "pooling": "attention",
+        "pooling": "sum",
         "temperature": 0.1,
         "subgraph_sampling": true,
         "subgraph_param": {
             "k": 6,
             "m": 64,
-            "pooling": "mean"
-        },
-        "kwargs": {
-            "wl_vocab_path": "wl_vocabs/mutag.pkl",
-            "wl_dim": 64,
-            "use_node_features_in_wl": true,
-            "wl_iterations": 3
+            "pooling": "sum"
         }
 
     },

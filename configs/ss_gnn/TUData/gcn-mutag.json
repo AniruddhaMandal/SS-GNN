@@ -1,5 +1,5 @@
 {
-    "name":"SubgraphSampling: MUTAG SS GCN",
+    "name":"SubgraphSampling: MUTAG SS GCN (attention pooling)",
     "dataset_name": "MUTAG",
     "model_name": "SS-GNN",
     "task": "Binary-Classification",
@@ -14,11 +14,11 @@
         "dropout": 0.1,
         "out_dim": 2,
         "pooling": "attention",
-        "temperature": 0.5,
+        "temperature": 0.1,
         "subgraph_sampling": true,
         "subgraph_param": {
             "k": 6,
-            "m": 500,
+            "m": 64,
             "pooling": "mean"
         }
 
