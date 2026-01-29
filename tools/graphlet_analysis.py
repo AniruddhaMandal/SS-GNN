@@ -102,9 +102,8 @@ class GraphletAnalyzer:
 
         # Special handling for synthetic datasets
         model_kwargs = {}
-        if self.dataset_name in ['CSL', 'Triangle-Parity', 'Clique-Detection']:
-            model_kwargs['node_feature_type'] = 'lap_pe'  # Laplacian PE for CSL
-            model_kwargs['lap_pe_dim'] = 8
+        if self.dataset_name in ['CSL', 'Triangle-Parity', 'Clique-Detection', 'Sparse-Clique-Detection']:
+            model_kwargs['node_feature_type'] = 'all_one'  # Laplacian PE for CSL
 
         # Create minimal config
         cfg = ExperimentConfig(

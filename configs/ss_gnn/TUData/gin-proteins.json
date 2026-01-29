@@ -12,11 +12,10 @@
     "mpnn_layers": 4,
     "dropout": 0.6,
     "out_dim": 2,
-    "pooling": "attention",
-    "temperature": 0.5,
+    "pooling": "mean",
     "subgraph_sampling": true,
     "subgraph_param": {
-        "k": 8,
+        "k": 6,
         "m": 100,
         "pooling": "sum"
     }

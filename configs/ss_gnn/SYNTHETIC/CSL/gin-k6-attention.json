@@ -1,37 +1,33 @@
 {
-  "name": "CSL: SS-GNN-WL (k=6, GIN, Frozen WL)",
+  "name": "CSL: SS-GNN (k=6, attention, GIN)",
   "dataset_name": "CSL",
-  "model_name": "SS-GNN-WL",
+  "model_name": "SS-GNN",
   "task": "Multi-Class-Classification",
 
   "model_config": {
-    "name": "ss_gnn_wl",
+    "name": "ss_gnn",
     "mpnn_type": "gin",
     "node_feature_dim": 8,
-    "edge_feature_dim": 1,
     "hidden_dim": 64,
     "mpnn_layers": 5,
     "dropout": 0.0,
     "out_dim": 10,
-    "pooling": "mean",
+    "pooling": "attention",
+    "temperature": 0.5,
     "subgraph_sampling": true,
     "subgraph_param": {
       "k": 6,
-      "m": 100,
+      "m": 64,
       "pooling": "sum"
     },
     "kwargs": {
       "node_feature_type": "lap_pe",
-      "lap_pe_dim": 8,
-      "wl_vocab_path": "wl_vocabs/csl_k6.pkl",
-      "wl_dim": 64,
-      "use_node_features_in_wl": false,
-      "wl_iterations": 3
+      "lap_pe_dim": 8
     }
   },
 
   "train": {
-    "epochs": 30,
+    "epochs": 100,
     "train_batch_size": 10,
     "val_batch_size": 10,
     "train_ratio": 0.8,
@@ -51,7 +47,7 @@
   "seed": 42,
   "num_workers": 0,
   "log_dir": "logs",
-  "checkpoint_dir": "checkpoints",
+  "checkpoint_dir": "checkpoints/ss-csl-k6-notebook-match/",
   "cache_dir": "cache",
   "sampler": "uniform",
   "use_amp": false,

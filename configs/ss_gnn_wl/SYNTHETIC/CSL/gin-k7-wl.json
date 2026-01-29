@@ -1,5 +1,5 @@
 {
-  "name": "CSL: SS-GNN-WL (k=6, GIN, Frozen WL)",
+  "name": "CSL: SS-GNN-WL (k=7, GIN, Frozen WL, degree_embed)",
   "dataset_name": "CSL",
   "model_name": "SS-GNN-WL",
   "task": "Multi-Class-Classification",
@@ -7,26 +7,26 @@
   "model_config": {
     "name": "ss_gnn_wl",
     "mpnn_type": "gin",
-    "node_feature_dim": 8,
+    "node_feature_dim": 5,
     "edge_feature_dim": 1,
     "hidden_dim": 64,
     "mpnn_layers": 5,
     "dropout": 0.0,
     "out_dim": 10,
-    "pooling": "mean",
+    "pooling": "sum",
     "subgraph_sampling": true,
     "subgraph_param": {
-      "k": 6,
+      "k": 7,
       "m": 100,
       "pooling": "sum"
     },
     "kwargs": {
-      "node_feature_type": "lap_pe",
-      "lap_pe_dim": 8,
-      "wl_vocab_path": "wl_vocabs/csl_k6.pkl",
+      "node_feature_type": "degree_embed",
+      "max_degree": 20,
+      "wl_vocab_path": "wl_vocabs/csl_k7.pkl",
       "wl_dim": 64,
       "use_node_features_in_wl": false,
-      "wl_iterations": 3
+      "wl_iterations": 4
     }
   },
 

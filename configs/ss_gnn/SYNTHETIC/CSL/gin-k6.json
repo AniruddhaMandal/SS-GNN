@@ -1,5 +1,5 @@
 {
-  "name": "CSL: SS-GNN (k=6, GIN)",
+  "name": "CSL: SS-GNN",
   "dataset_name": "CSL",
   "model_name": "SS-GNN",
   "task": "Multi-Class-Classification",
@@ -7,13 +7,12 @@
   "model_config": {
     "name": "ss_gnn",
     "mpnn_type": "gin",
-    "node_feature_dim": 5,
+    "node_feature_dim": 8,
     "hidden_dim": 64,
     "mpnn_layers": 5,
     "dropout": 0.0,
     "out_dim": 10,
-    "pooling": "attention",
-    "temperature": 0.20,
+    "pooling": "mean",
     "subgraph_sampling": true,
     "subgraph_param": {
       "k": 6,
@@ -21,7 +20,8 @@
       "pooling": "sum"
     },
     "kwargs": {
-      "node_feature_type": "all_one"
+      "node_feature_type": "lap_pe",
+      "lap_pe_dim": 8 
     }
   },
 
@@ -46,7 +46,7 @@
   "seed": 42,
   "num_workers": 0,
   "log_dir": "logs",
-  "checkpoint_dir": "checkpoints/ss-csl-k6-notebook-match/",
+  "checkpoint_dir": "checkpoints",
   "cache_dir": "cache",
   "sampler": "uniform",
   "use_amp": false,

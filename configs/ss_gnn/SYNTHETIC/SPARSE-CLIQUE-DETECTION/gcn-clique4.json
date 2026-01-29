@@ -1,5 +1,5 @@
 {
-  "name": "Sparse-Clique-Detection: SS-GNN GCN",
+  "name": "Sparse-Clique-Detection: SS-GNN GCN(k=4)",
   "dataset_name": "Sparse-Clique-Detection",
   "model_name": "SS-GNN",
   "task": "Binary-Classification",
@@ -16,7 +16,7 @@
     "temperature": 0.20,
     "subgraph_sampling": true,
     "subgraph_param": {
-        "k": 5,
+        "k": 4,
         "m": 200,
         "pooling": "sum"
     },

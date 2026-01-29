@@ -123,7 +123,7 @@ def main():
             out_dim=2,
             subgraph_sampling=True,
             subgraph_param=SubgraphParam(k=args.k, m=args.m, pooling="mean"),
-            kwargs={'node_feature_type': 'all_one'}  # Required for some datasets (CSL, etc.)
+            kwargs={'node_feature_type': 'lap_pe'}  # Required for some datasets (CSL, etc.)
         ),
         train=TrainConfig(
             train_batch_size=32,

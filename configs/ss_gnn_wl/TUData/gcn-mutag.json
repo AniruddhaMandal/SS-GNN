@@ -1,5 +1,5 @@
 {
-    "name":"SS-GNN-WL: MUTAG GCN (attention pooling)",
+    "name":"SS-GNN-WL: MUTAG GCN(attn pooling)",
     "dataset_name": "MUTAG",
     "model_name": "SS-GNN-WL",
     "task": "Binary-Classification",
@@ -18,11 +18,11 @@
         "subgraph_sampling": true,
         "subgraph_param": {
             "k": 6,
-            "m": 64,
+            "m": 100,
             "pooling": "mean"
         },
         "kwargs": {
-            "wl_vocab_path": "wl_vocabs/mutag.pkl",
+            "wl_vocab_path": "wl_vocabs/mutag_k6.pkl",
             "wl_dim": 64,
             "use_node_features_in_wl": true,
             "wl_iterations": 3
