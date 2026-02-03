@@ -466,6 +466,13 @@ def build_heterophilic(cfg: ExperimentConfig):
     # Get the single graph and add train/val/test masks
     data = dataset[0]
 
+    # Handle multi-split masks (e.g., WikipediaNetwork has 10 splits for CV)
+    # Select the first split (index 0) if masks are 2D
+    if hasattr(data, 'train_mask') and data.train_mask.dim() == 2:
+        data.train_mask = data.train_mask[:, 0]
+        data.val_mask = data.val_mask[:, 0]
+        data.test_mask = data.test_mask[:, 0]
+
     # Create random node split if masks don't exist
     if not hasattr(data, 'train_mask'):
         split_transform = RandomNodeSplit(
