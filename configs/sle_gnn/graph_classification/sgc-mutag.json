@@ -1,0 +1,39 @@
+{
+    "name": "SLE-GNN: MUTAG SGC",
+    "task": "Binary-Classification",
+    "dataset_name": "MUTAG",
+    "model_name": "SLE-GNN",
+
+    "model_config": {
+        "mpnn_type": "sgc",
+        "node_feature_dim": 7,
+        "edge_feature_dim": 4,
+        "hidden_dim": 64,
+        "out_dim": 2,
+        "mpnn_layers": 4,
+        "dropout": 0.1,
+        "pooling": "mean",
+        "kwargs": {
+            "residual": true,
+            "jk_mode": null
+        }
+    },
+
+    "train": {
+        "epochs": 100,
+        "train_batch_size": 32,
+        "val_batch_size": 64,
+        "lr": 0.001,
+        "weight_decay": 0.0,
+        "optimizer": "adam",
+        "loss_fn": "CrossEntropyLoss",
+        "metric": "ACC",
+        "train_ratio": 0.8,
+        "val_ratio": 0.1
+    },
+
+    "device": "cuda",
+    "seed": 42,
+    "num_workers": 4,
+    "cache_dir": "./cache"
+}

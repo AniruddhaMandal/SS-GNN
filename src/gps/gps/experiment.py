@@ -536,7 +536,12 @@ class Experiment:
                     loss = self.criterion(output, labels.long())
                 elif self.cfg.task == "Node-Classification":
                     # Node-level classification: output is [num_nodes, num_classes], labels is [num_nodes]
-                    loss = self.criterion(output, labels.long())
+                    # Apply train_mask if available
+                    if batch.train_mask is not None:
+                        train_mask = batch.train_mask
+                        loss = self.criterion(output[train_mask], labels[train_mask].long())
+                    else:
+                        loss = self.criterion(output, labels.long())
                 elif self.cfg.task == "Link-Prediction":
                     loss = self.criterion(output, labels)
                 elif self.cfg.task == "Regression":
@@ -618,7 +623,20 @@ class Experiment:
                         loss = self.criterion(output, labels.long())
                     if self.cfg.task == "Node-Classification":
                         # Node-level classification: output is [num_nodes, num_classes], labels is [num_nodes]
-                        loss = self.criterion(output, labels.long())
+                        # Apply the appropriate mask based on split
+                        if split == 'val' and batch.val_mask is not None:
+                            mask = batch.val_mask
+                        elif split == 'test' and batch.test_mask is not None:
+                            mask = batch.test_mask
+                        elif split == 'train' and batch.train_mask is not None:
+                            mask = batch.train_mask
+                        else:
+                            mask = None
+
+                        if mask is not None:
+                            loss = self.criterion(output[mask], labels[mask].long())
+                        else:
+                            loss = self.criterion(output, labels.long())
                     if self.cfg.task == "Link-Prediction":
                         loss = self.criterion(output, labels)
                     if self.cfg.task == "Regression":
@@ -632,7 +650,23 @@ class Experiment:
                     all_logits.append(output.detach().cpu().numpy())
                     all_targets.append(labels.detach().cpu().numpy())
                     all_edge_label_index.append(batch.edge_label_index.detach().cpu().numpy())
+                elif self.cfg.task == "Node-Classification":
+                    # Apply the appropriate mask for node classification
+                    if split == 'val' and batch.val_mask is not None:
+                        mask = batch.val_mask
+                    elif split == 'test' and batch.test_mask is not None:
+                        mask = batch.test_mask
+                    elif split == 'train' and batch.train_mask is not None:
+                        mask = batch.train_mask
+                    else:
+                        mask = None
 
+                    if mask is not None:
+                        all_logits.append(output[mask].detach().cpu())
+                        all_targets.append(labels[mask].detach().cpu())
+                    else:
+                        all_logits.append(output.detach().cpu())
+                        all_targets.append(labels.detach().cpu())
                 else:
                     all_logits.append(output.detach().cpu())
                     all_targets.append(labels.detach().cpu())
@@ -749,6 +783,15 @@ class Experiment:
             labels = batch.edge_label.float()
         else:
             labels = batch.y.float()
+
+        # Handle node classification masks
+        if self.cfg.task == 'Node-Classification':
+            if hasattr(batch, 'train_mask'):
+                sf_batch.train_mask = batch.train_mask
+            if hasattr(batch, 'val_mask'):
+                sf_batch.val_mask = batch.val_mask
+            if hasattr(batch, 'test_mask'):
+                sf_batch.test_mask = batch.test_mask
 
         # load sample features
         if self.cfg.model_config.subgraph_sampling:

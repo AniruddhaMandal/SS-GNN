@@ -37,6 +37,57 @@ def SSGNN(cfg: ExperimentConfig):
 
     return model
 
+@register_model('SLE-GNN')
+def SLE_GNN(cfg: ExperimentConfig):
+    """
+    Self-Loop Enhanced GNN (SLE-GNN).
+
+    At layer l, adds l self-loops to each node before message passing.
+    This progressively emphasizes self-information as depth increases.
+
+    Supports both graph and node classification tasks.
+    """
+    from gps.models.sle_gnn import SLEGNNClassifier, SLEGNNNodeClassifier
+
+    # Get optional parameters from kwargs
+    jk_mode = cfg.model_config.kwargs.get('jk_mode', None)  # 'cat', 'max', 'lstm', or None
+    residual = cfg.model_config.kwargs.get('residual', True)
+    heads = cfg.model_config.kwargs.get('heads', 1)  # For GAT variants
+    mlp_layers = cfg.model_config.kwargs.get('mlp_layers', 2)
+
+    # Choose classifier based on task
+    if cfg.task == 'Node-Classification':
+        model = SLEGNNNodeClassifier(
+            in_channels=cfg.model_config.node_feature_dim,
+            hidden_dim=cfg.model_config.hidden_dim,
+            out_dim=cfg.model_config.hidden_dim,
+            num_layers=cfg.model_config.mpnn_layers,
+            conv_type=cfg.model_config.mpnn_type,
+            mlp_layers=mlp_layers,
+            heads=heads,
+            dropout=cfg.model_config.dropout,
+            residual=residual,
+            jk_mode=jk_mode,
+        )
+    else:
+        # Graph classification
+        model = SLEGNNClassifier(
+            in_channels=cfg.model_config.node_feature_dim,
+            hidden_dim=cfg.model_config.hidden_dim,
+            out_dim=cfg.model_config.hidden_dim,
+            num_layers=cfg.model_config.mpnn_layers,
+            conv_type=cfg.model_config.mpnn_type,
+            mlp_layers=mlp_layers,
+            heads=heads,
+            dropout=cfg.model_config.dropout,
+            pooling=cfg.model_config.pooling,
+            residual=residual,
+            jk_mode=jk_mode,
+            edge_dim=cfg.model_config.edge_feature_dim,
+        )
+
+    return model
+
 @register_model('SS-GNN-WL')
 def SSGNN_WL(cfg: ExperimentConfig):
     """

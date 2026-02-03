@@ -295,6 +295,289 @@ def build_molhiv(cfg: ExperimentConfig):
     return build_dataloaders_from_dataset(dataset, cfg)
 
 
+# ============ Node Classification Datasets ============
+
+@register_dataset('Cora')
+@register_dataset('CiteSeer')
+@register_dataset('PubMed')
+def build_planetoid(cfg: ExperimentConfig):
+    """
+    Build Planetoid datasets (Cora, CiteSeer, PubMed).
+
+    These are citation network datasets for node classification.
+    - Cora: 2708 nodes, 5429 edges, 7 classes, 1433 features
+    - CiteSeer: 3327 nodes, 4732 edges, 6 classes, 3703 features
+    - PubMed: 19717 nodes, 44338 edges, 3 classes, 500 features
+
+    Note: For node classification, the entire graph is used as a single batch.
+    The train/val/test splits are handled via masks in the data object.
+    """
+    from torch_geometric.datasets import Planetoid
+    from torch_geometric.transforms import NormalizeFeatures
+    from torch_geometric.loader import DataLoader
+
+    transform = NormalizeFeatures()
+    dataset = Planetoid(root='./data/Planetoid', name=cfg.dataset_name, transform=transform)
+
+    # For Planetoid, we return the same dataset for all loaders
+    # The train/val/test splits are determined by masks in the data object
+    # Each loader returns the full graph; masking is applied during training/eval
+    data = dataset[0]
+
+    # Create a wrapper dataset that can be used with DataLoader
+    class NodeClassificationDataset:
+        def __init__(self, data):
+            self.data = data
+
+        def __len__(self):
+            return 1  # Single graph
+
+        def __getitem__(self, idx):
+            return self.data
+
+    node_dataset = NodeClassificationDataset(data)
+
+    # For node classification, batch size is always 1 (the entire graph)
+    train_loader = DataLoader([data], batch_size=1, shuffle=False)
+    val_loader = DataLoader([data], batch_size=1, shuffle=False)
+    test_loader = DataLoader([data], batch_size=1, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
+
+@register_dataset('AmazonPhoto')
+@register_dataset('AmazonComputers')
+def build_amazon(cfg: ExperimentConfig):
+    """
+    Build Amazon co-purchase datasets.
+
+    - AmazonPhoto: 7650 nodes, 119081 edges, 8 classes
+    - AmazonComputers: 13752 nodes, 245861 edges, 10 classes
+    """
+    from torch_geometric.datasets import Amazon
+    from torch_geometric.transforms import NormalizeFeatures, RandomNodeSplit
+    from torch_geometric.loader import DataLoader
+
+    # Map dataset name to internal name
+    name_map = {
+        'AmazonPhoto': 'Photo',
+        'AmazonComputers': 'Computers'
+    }
+    internal_name = name_map[cfg.dataset_name]
+
+    # Apply transforms including random split for train/val/test
+    transform = NormalizeFeatures()
+    dataset = Amazon(root='./data/Amazon', name=internal_name, transform=transform)
+
+    # Get the single graph and add train/val/test masks
+    data = dataset[0]
+
+    # Create random node split if masks don't exist
+    if not hasattr(data, 'train_mask'):
+        split_transform = RandomNodeSplit(
+            split='train_rest',
+            num_val=int(0.2 * data.num_nodes),
+            num_test=int(0.2 * data.num_nodes)
+        )
+        data = split_transform(data)
+
+    # For node classification, batch size is always 1 (the entire graph)
+    train_loader = DataLoader([data], batch_size=1, shuffle=False)
+    val_loader = DataLoader([data], batch_size=1, shuffle=False)
+    test_loader = DataLoader([data], batch_size=1, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
+
+@register_dataset('CoauthorCS')
+@register_dataset('CoauthorPhysics')
+def build_coauthor(cfg: ExperimentConfig):
+    """
+    Build Coauthor datasets.
+
+    - CoauthorCS: 18333 nodes, 81894 edges, 15 classes
+    - CoauthorPhysics: 34493 nodes, 247962 edges, 5 classes
+    """
+    from torch_geometric.datasets import Coauthor
+    from torch_geometric.transforms import NormalizeFeatures, RandomNodeSplit
+    from torch_geometric.loader import DataLoader
+
+    # Map dataset name to internal name
+    name_map = {
+        'CoauthorCS': 'CS',
+        'CoauthorPhysics': 'Physics'
+    }
+    internal_name = name_map[cfg.dataset_name]
+
+    transform = NormalizeFeatures()
+    dataset = Coauthor(root='./data/Coauthor', name=internal_name, transform=transform)
+
+    # Get the single graph and add train/val/test masks
+    data = dataset[0]
+
+    # Create random node split if masks don't exist
+    if not hasattr(data, 'train_mask'):
+        split_transform = RandomNodeSplit(
+            split='train_rest',
+            num_val=int(0.2 * data.num_nodes),
+            num_test=int(0.2 * data.num_nodes)
+        )
+        data = split_transform(data)
+
+    # For node classification, batch size is always 1 (the entire graph)
+    train_loader = DataLoader([data], batch_size=1, shuffle=False)
+    val_loader = DataLoader([data], batch_size=1, shuffle=False)
+    test_loader = DataLoader([data], batch_size=1, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
+
+@register_dataset('Chameleon')
+@register_dataset('Squirrel')
+@register_dataset('Actor')
+@register_dataset('Cornell')
+@register_dataset('Texas')
+@register_dataset('Wisconsin')
+def build_heterophilic(cfg: ExperimentConfig):
+    """
+    Build heterophilic graph datasets.
+
+    These datasets have low homophily, where connected nodes often have different labels.
+    - Chameleon: 2277 nodes, 36101 edges, 5 classes
+    - Squirrel: 5201 nodes, 217073 edges, 5 classes
+    - Actor: 7600 nodes, 33544 edges, 5 classes
+    - Cornell, Texas, Wisconsin: ~180 nodes each, 5 classes (WebKB)
+    """
+    from torch_geometric.datasets import WikipediaNetwork, Actor as ActorDataset, WebKB
+    from torch_geometric.transforms import NormalizeFeatures, RandomNodeSplit
+    from torch_geometric.loader import DataLoader
+
+    transform = NormalizeFeatures()
+
+    if cfg.dataset_name in ['Chameleon', 'Squirrel']:
+        dataset = WikipediaNetwork(root='./data/WikipediaNetwork', name=cfg.dataset_name.lower(), transform=transform)
+    elif cfg.dataset_name == 'Actor':
+        dataset = ActorDataset(root='./data/Actor', transform=transform)
+    elif cfg.dataset_name in ['Cornell', 'Texas', 'Wisconsin']:
+        dataset = WebKB(root='./data/WebKB', name=cfg.dataset_name, transform=transform)
+    else:
+        raise ValueError(f"Unknown heterophilic dataset: {cfg.dataset_name}")
+
+    # Get the single graph and add train/val/test masks
+    data = dataset[0]
+
+    # Create random node split if masks don't exist
+    if not hasattr(data, 'train_mask'):
+        split_transform = RandomNodeSplit(
+            split='train_rest',
+            num_val=int(0.2 * data.num_nodes),
+            num_test=int(0.2 * data.num_nodes)
+        )
+        data = split_transform(data)
+
+    # For node classification, batch size is always 1 (the entire graph)
+    train_loader = DataLoader([data], batch_size=1, shuffle=False)
+    val_loader = DataLoader([data], batch_size=1, shuffle=False)
+    test_loader = DataLoader([data], batch_size=1, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
+
+@register_dataset('RomanEmpire')
+@register_dataset('AmazonRatings')
+@register_dataset('Minesweeper')
+@register_dataset('Tolokers')
+@register_dataset('Questions')
+def build_heterophilic_platonov(cfg: ExperimentConfig):
+    """
+    Build heterophilic datasets from Platonov et al. (2023).
+
+    These are more challenging heterophilic benchmarks.
+    - RomanEmpire: Wikipedia article network
+    - AmazonRatings: Amazon product co-review network
+    - Minesweeper: Synthetic grid-based dataset
+    - Tolokers: Crowdsourcing worker network
+    - Questions: Question-answering user network
+    """
+    from torch_geometric.datasets import HeterophilousGraphDataset
+    from torch_geometric.transforms import NormalizeFeatures
+    from torch_geometric.loader import DataLoader
+
+    # Map dataset names
+    name_map = {
+        'RomanEmpire': 'Roman-empire',
+        'AmazonRatings': 'Amazon-ratings',
+        'Minesweeper': 'Minesweeper',
+        'Tolokers': 'Tolokers',
+        'Questions': 'Questions'
+    }
+    internal_name = name_map[cfg.dataset_name]
+
+    transform = NormalizeFeatures()
+    dataset = HeterophilousGraphDataset(root='./data/HeterophilousGraph', name=internal_name, transform=transform)
+
+    # Get the single graph - these datasets typically have train/val/test masks
+    data = dataset[0]
+
+    # For node classification, batch size is always 1 (the entire graph)
+    train_loader = DataLoader([data], batch_size=1, shuffle=False)
+    val_loader = DataLoader([data], batch_size=1, shuffle=False)
+    test_loader = DataLoader([data], batch_size=1, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
+
+@register_dataset('ogbn-arxiv')
+def build_ogbn_arxiv(cfg: ExperimentConfig):
+    """
+    Build ogbn-arxiv dataset from OGB.
+
+    Large-scale citation network.
+    - 169343 nodes, 1166243 edges, 40 classes
+    - Node features: 128-dimensional
+    """
+    from ogb.nodeproppred import PygNodePropPredDataset
+
+    dataset = PygNodePropPredDataset(name='ogbn-arxiv', root='./data/OGB')
+
+    # OGB provides its own splits via get_idx_split() - handled by build_dataloaders_from_dataset
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
+@register_dataset('ogbn-proteins')
+def build_ogbn_proteins(cfg: ExperimentConfig):
+    """
+    Build ogbn-proteins dataset from OGB.
+
+    Protein-protein association network.
+    - 132534 nodes, 39561252 edges, 112 classes (multi-label)
+    - No node features (use node degree or random init)
+    """
+    from ogb.nodeproppred import PygNodePropPredDataset
+
+    dataset = PygNodePropPredDataset(name='ogbn-proteins', root='./data/OGB')
+
+    # OGB provides its own splits via get_idx_split() - handled by build_dataloaders_from_dataset
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
+# ============ Graph Classification Datasets ============
+
+@register_dataset('ogbg-ppa')
+def build_ogbg_ppa(cfg: ExperimentConfig):
+    """
+    Build OGB graph classification dataset: ogbg-ppa.
+
+    - ogbg-ppa: Protein-protein association prediction (37 classes)
+    """
+    from ogb.graphproppred import PygGraphPropPredDataset
+
+    dataset = PygGraphPropPredDataset(name='ogbg-ppa', root='./data/OGB')
+
+    # OGB provides its own splits via get_idx_split() - handled by build_dataloaders_from_dataset
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
 @register_dataset('BBBP')
 def build_bbbp(cfg: ExperimentConfig):
     """

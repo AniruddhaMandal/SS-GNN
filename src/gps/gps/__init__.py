@@ -198,6 +198,12 @@ class SubgraphFeaturesBatch:
     # Used to track which original graphs are in a batch (for presample cache lookup)
     graph_idx: Optional[torch.Tensor] = None  # [num_graphs] Original dataset indices
     split_id: Optional[torch.Tensor] = None   # [num_graphs] Split identifier (0=train, 1=val, 2=test)
+
+    # ============ Node classification masks ============
+    # Used for node classification tasks with train/val/test splits
+    train_mask: Optional[torch.Tensor] = None  # [num_nodes] Boolean mask for training nodes
+    val_mask: Optional[torch.Tensor] = None    # [num_nodes] Boolean mask for validation nodes
+    test_mask: Optional[torch.Tensor] = None   # [num_nodes] Boolean mask for test nodes
     
     def to(self, device: torch.device):
         """Move all tensors to the specified device."""
