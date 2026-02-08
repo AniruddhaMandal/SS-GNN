@@ -37,7 +37,8 @@ class VanillaGNNClassifier(nn.Module):
                  mlp_layers: int = 2,
                  dropout: float = 0.1,
                  conv_type: str = 'gine',
-                 pooling: str = 'mean'):
+                 pooling: str = 'mean',
+                 residual: bool = True):
                  
         super().__init__()
         conv_type = conv_type.lower()
@@ -49,6 +50,7 @@ class VanillaGNNClassifier(nn.Module):
         self.dropout = dropout
         self.out_dim = out_dim
         self.pooling = pooling
+        self.residual = residual
 
         # Project inputs to hidden_dim once so all layers are width-matched.
         self.node_proj = nn.Linear(in_channels, hidden_dim)
@@ -112,7 +114,8 @@ class VanillaGNNClassifier(nn.Module):
             h = conv(h, edge_index) if not self.use_edges else conv(h, edge_index, e)
             h = bn(h)
             h = F.relu(h)
-            h = h + h_res  
+            if self.residual:
+                h = h + h_res
             if i < self.num_layers - 1:  # Skip dropout on last layer
                 h = F.dropout(h, p=self.dropout, training=self.training)
         
