@@ -7,7 +7,7 @@ class WandBWriter:
     def __init__(self, cfg: ExperimentConfig):
         import wandb
         self.wandb = wandb
-        run_dir = os.path.join(cfg.log_dir, cfg.name)
+        run_dir = cfg.log_dir
 
         # Check if wandb is already initialized (e.g., from a sweep agent)
         if wandb.run is not None:
@@ -15,7 +15,7 @@ class WandBWriter:
             self.run = wandb.run
             wandb.config.update(cfg.parameter_dict(), allow_val_change=True)
         else:
-            # Normal initialization
+            # Normal initialization — name matches the directory name
             self.run = wandb.init(
                 project='SS-GNN',
                 name=cfg.name,

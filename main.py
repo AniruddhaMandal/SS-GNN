@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 import numpy as np
+from datetime import datetime
 from gps.experiment import Experiment
 from gps.config import load_config, set_config
 
@@ -52,6 +53,10 @@ if __name__ == "__main__":
     parser.add_argument('--presample', '-p',
                         action='store_true',
                         help='Presample subgraphs once before training for computational speed.')
+    parser.add_argument('--name', '-n',
+                        type=str,
+                        default=None,
+                        help='Override experiment name (default: auto-generated from model/dataset/conv)')
     args = parser.parse_args()
 
     # Load and set config
@@ -63,6 +68,17 @@ if __name__ == "__main__":
 
     exp_config = set_config(cfg)
 
+    # Override name if provided via CLI
+    if args.name:
+        exp_config.name = args.name
+
+    # Create timestamped run directory
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = os.path.join(exp_config.output_dir, exp_config.name, timestamp)
+    exp_config.experiment_dir = run_dir
+    exp_config.log_dir = os.path.join(run_dir, "logs")
+    exp_config.checkpoint_dir = os.path.join(run_dir, "checkpoints")
+
     # Set presample flag from CLI
     if args.presample:
         exp_config.presample = True
@@ -73,12 +89,27 @@ if __name__ == "__main__":
         test_metrics = []
         val_metrics = []
         for seed in args.seeds:
+            # Set per-seed subdirectories
+            seed_dir = os.path.join(run_dir, f"seed_{seed}")
             exp_config.seed = seed
+            exp_config.log_dir = os.path.join(seed_dir, "logs")
+            exp_config.checkpoint_dir = os.path.join(seed_dir, "checkpoints")
+
             experiment = Experiment(exp_config)
             result = experiment.train()
             train_metrics.append(result['train_metric'])
             test_metrics.append(result['test_metric'])
             val_metrics.append(result['val_metric'])
+
+            # Save per-seed result
+            seed_out_str = f"Result (seed {seed}):\
+                  \n\tTest: {result['test_metric']:.5f}\
+                  \n\tTrain: {result['train_metric']:.5f}\
+                  \n\tVal: {result['val_metric']:.5f}"
+            os.makedirs(seed_dir, exist_ok=True)
+            with open(os.path.join(seed_dir, "result.txt"), 'w') as f:
+                f.write(seed_out_str)
+
         train_metrics = np.array(train_metrics)
         test_metrics = np.array(test_metrics)
         val_metrics = np.array(val_metrics)
@@ -88,6 +119,11 @@ if __name__ == "__main__":
               \n\t Val: {val_metrics.mean():.5f} ± {val_metrics.std():.5f}\
               "
         print(out_str)
+
+        # Save aggregated results to run_dir
+        os.makedirs(run_dir, exist_ok=True)
+        with open(os.path.join(run_dir, "results.txt"), 'w') as f:
+            f.write(out_str)
     else:
         print(f"Running single experiment with seed {exp_config.seed}")
         experiment = Experiment(exp_config)
@@ -101,6 +137,7 @@ if __name__ == "__main__":
                     \n\tVal: {val_metrics:.5f}"
         print(out_str)
 
-    os.makedirs('experiment_results',exist_ok=True)
-    with open(f"experiment_results/{exp_config.name}.txt",'w') as f:
-        f.write(out_str)
+        # Save result to run_dir
+        os.makedirs(run_dir, exist_ok=True)
+        with open(os.path.join(run_dir, "result.txt"), 'w') as f:
+            f.write(out_str)

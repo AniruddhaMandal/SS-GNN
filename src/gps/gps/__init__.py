@@ -100,8 +100,9 @@ class ExperimentConfig:
     seed: int = 42
     num_workers: int = 4
     output_dir: str = "experiments"  # Base directory for all experiment outputs
-    log_dir: str = "logs"  # Will be set to {output_dir}/{name}/logs in config.py
-    checkpoint_dir: str = "checkpoints"  # Will be set to {output_dir}/{name}/checkpoints in config.py
+    experiment_dir: Optional[str] = None  # Will be set to {output_dir}/{name} in config.py
+    log_dir: str = "logs"  # Will be set to {experiment_dir}/logs in config.py
+    checkpoint_dir: str = "checkpoints"  # Will be set to {experiment_dir}/checkpoints in config.py
     save_every: int = 1
     keep_last_k: int = 3
     cache_dir: Optional[str] = None

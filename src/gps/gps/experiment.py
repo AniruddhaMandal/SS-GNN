@@ -214,11 +214,19 @@ class Experiment:
 
         logger = logging.getLogger(self.cfg.name)
         logger.setLevel(logging.INFO)
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.INFO)
-        ch.setFormatter(ColoredFormatter())
         if not logger.handlers:
+            # Console handler with colors
+            ch = logging.StreamHandler()
+            ch.setLevel(logging.INFO)
+            ch.setFormatter(ColoredFormatter())
             logger.addHandler(ch)
+
+            # File handler (plain text, no ANSI colors)
+            fh = logging.FileHandler(os.path.join(self.cfg.log_dir, "train.log"))
+            fh.setLevel(logging.INFO)
+            fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s",
+                                              datefmt="%Y-%m-%d %H:%M:%S"))
+            logger.addHandler(fh)
 
         if self.cfg.tracker in ['Off', 'OFF', 'off', 'false', 'False']:
             from gps.wandb_writer import DummyWriter
@@ -232,7 +240,7 @@ class Experiment:
             self.logger.info('WandB: supports wandb, `pip install wandb` and login to use.')
             try: 
                 from torch.utils.tensorboard import SummaryWriter
-                self.writer = SummaryWriter(log_dir=os.path.join(self.cfg.log_dir, self.cfg.name))
+                self.writer = SummaryWriter(log_dir=self.cfg.log_dir)
                 self.writer.add_hparams(self.cfg.parameter_dict(),{})
             except ImportError:
                 self.logger.error('Install Tensorboard or WandB.')

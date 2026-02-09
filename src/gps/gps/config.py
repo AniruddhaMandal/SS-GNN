@@ -27,12 +27,13 @@ def set_config(cfg_dict: dict,
     exp = ExperimentConfig()                 # defaults
     merge_into_dataclass(exp, cfg_dict)      # overlay file values
 
-    # --- Set up organized experiment output paths ---
-    # If log_dir and checkpoint_dir are still defaults, organize them under output_dir/name/
-    if exp.log_dir == "logs":  # User didn't override
-        exp.log_dir = os.path.join(exp.output_dir, exp.name, "logs")
-    if exp.checkpoint_dir == "checkpoints":  # User didn't override
-        exp.checkpoint_dir = os.path.join(exp.output_dir, exp.name, "checkpoints")
+    # --- Auto-generate experiment name from config attributes ---
+    exp.name = f"{exp.model_name}: {exp.dataset_name} {exp.model_config.mpnn_type}"
+
+    # --- Set up organized experiment output paths (no timestamp — main.py adds that) ---
+    exp.experiment_dir = os.path.join(exp.output_dir, exp.name)
+    exp.log_dir = os.path.join(exp.experiment_dir, "logs")
+    exp.checkpoint_dir = os.path.join(exp.experiment_dir, "checkpoints")
 
     # --- Resolve callables based on names present in exp ---
     exp.model_fn = build_model
