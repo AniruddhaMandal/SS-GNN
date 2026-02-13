@@ -13,7 +13,7 @@ import wandb
 # ----- Type aliases -----
 PoolingType = Literal["mean", "max", "add", "sum", "off"]
 OptimizerType = Literal["adam", "adamw", "sgd"]
-MpnnType = Literal["gcn", "gin", "graphsage"]
+MpnnType = Literal["gcn", "gin", "gine", "sage", "gat", "gatv2", "sgc", "gcnii", "pna", "jknet"]
 
 ModelFactory = Callable[["ExperimentConfig"], nn.Module]
 DataloaderFactory = Callable[["ExperimentConfig"], Tuple[DataLoader, DataLoader, Optional[DataLoader]]]

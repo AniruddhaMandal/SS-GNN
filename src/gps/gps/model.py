@@ -12,15 +12,21 @@ def VANILLA(cfg: ExperimentConfig):
     # For node-level tasks, skip global pooling
     pooling = 'off' if cfg.task == 'Node-Classification' else cfg.model_config.pooling
     residual = cfg.model_config.kwargs.get('residual', True)
+    jk_mode = cfg.model_config.kwargs.get('jk_mode', 'cat')
+    gcnii_alpha = cfg.model_config.kwargs.get('gcnii_alpha', 0.1)
+    gcnii_theta = cfg.model_config.kwargs.get('gcnii_theta', 0.5)
     model = VanillaGNNClassifier(in_channels=cfg.model_config.node_feature_dim,
-                            edge_dim= cfg.model_config.edge_feature_dim,
+                            edge_dim=cfg.model_config.edge_feature_dim,
                             hidden_dim=cfg.model_config.hidden_dim,
                             out_dim=cfg.model_config.hidden_dim,
                             num_layers=cfg.model_config.mpnn_layers,
                             dropout=cfg.model_config.dropout,
                             conv_type=cfg.model_config.mpnn_type,
                             pooling=pooling,
-                            residual=residual)
+                            residual=residual,
+                            gcnii_alpha=gcnii_alpha,
+                            gcnii_theta=gcnii_theta,
+                            jk_mode=jk_mode)
     return model
 
 @register_model('SS-GNN')
@@ -56,6 +62,8 @@ def SLE_GNN(cfg: ExperimentConfig):
     residual = cfg.model_config.kwargs.get('residual', True)
     heads = cfg.model_config.kwargs.get('heads', 1)  # For GAT variants
     mlp_layers = cfg.model_config.kwargs.get('mlp_layers', 2)
+    gcnii_alpha = cfg.model_config.kwargs.get('gcnii_alpha', 0.1)
+    gcnii_theta = cfg.model_config.kwargs.get('gcnii_theta', 0.5)
 
     # Choose classifier based on task
     if cfg.task == 'Node-Classification':
@@ -70,6 +78,8 @@ def SLE_GNN(cfg: ExperimentConfig):
             dropout=cfg.model_config.dropout,
             residual=residual,
             jk_mode=jk_mode,
+            gcnii_alpha=gcnii_alpha,
+            gcnii_theta=gcnii_theta,
         )
     else:
         # Graph classification
@@ -86,6 +96,8 @@ def SLE_GNN(cfg: ExperimentConfig):
             residual=residual,
             jk_mode=jk_mode,
             edge_dim=cfg.model_config.edge_feature_dim,
+            gcnii_alpha=gcnii_alpha,
+            gcnii_theta=gcnii_theta,
         )
 
     return model

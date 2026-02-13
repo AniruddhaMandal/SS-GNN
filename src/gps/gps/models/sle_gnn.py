@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch_geometric.nn import (
-    GCNConv, GINConv, GATConv, GATv2Conv, SAGEConv, SGConv,
+    GCNConv, GINConv, GATConv, GATv2Conv, SAGEConv, SGConv, GCN2Conv, PNAConv,
     global_mean_pool, global_add_pool, global_max_pool
 )
 from torch_geometric.nn.norm import BatchNorm
@@ -82,6 +82,11 @@ class SLEGNNLayer(nn.Module):
         mlp_layers: int = 2,
         heads: int = 1,
         dropout: float = 0.0,
+        # GCNII parameters
+        gcnii_alpha: float = 0.1,
+        gcnii_theta: float = 0.5,
+        # PNA parameters
+        deg: torch.Tensor = None,
     ):
         super().__init__()
         self.layer_idx = layer_idx  # 1-indexed: first layer adds 1 self-loop
@@ -102,12 +107,22 @@ class SLEGNNLayer(nn.Module):
             self.conv = SAGEConv(in_channels, out_channels)
         elif self.conv_type == 'sgc':
             self.conv = SGConv(in_channels, out_channels, K=1)
+        elif self.conv_type == 'gcnii':
+            self.conv = GCN2Conv(out_channels, alpha=gcnii_alpha, theta=gcnii_theta,
+                                 layer=layer_idx, shared_weights=True, cached=False, normalize=True)
+        elif self.conv_type == 'pna':
+            if deg is None:
+                deg = torch.ones(128, dtype=torch.long)
+            self.conv = PNAConv(in_channels, out_channels,
+                                aggregators=['mean', 'min', 'max', 'std'],
+                                scalers=['identity', 'amplification', 'attenuation'],
+                                deg=deg)
         else:
             raise ValueError(f"Unknown conv_type: {conv_type}")
 
         self.bn = BatchNorm(out_channels)
 
-    def forward(self, x: Tensor, edge_index: Tensor, num_nodes: int) -> Tensor:
+    def forward(self, x: Tensor, edge_index: Tensor, num_nodes: int, x_0: Tensor = None) -> Tensor:
         """
         Forward pass with layer-specific self-loops.
 
@@ -115,6 +130,7 @@ class SLEGNNLayer(nn.Module):
             x: [N, in_channels] node features
             edge_index: [2, E] edge connectivity
             num_nodes: number of nodes
+            x_0: [N, in_channels] initial node features (required for GCNII)
 
         Returns:
             x: [N, out_channels] updated node features
@@ -123,7 +139,10 @@ class SLEGNNLayer(nn.Module):
         edge_index_with_loops = _add_custom_self_loops(edge_index, num_nodes, self.layer_idx)
 
         # Message passing
-        x = self.conv(x, edge_index_with_loops)
+        if self.conv_type == 'gcnii':
+            x = self.conv(x, x_0, edge_index_with_loops)
+        else:
+            x = self.conv(x, edge_index_with_loops)
         x = self.bn(x)
         x = F.relu(x)
 
@@ -149,15 +168,25 @@ class SLEGNNEncoder(nn.Module):
         dropout: float = 0.1,
         residual: bool = True,
         jk_mode: Optional[str] = None,  # 'cat', 'max', 'lstm', or None
+        # GCNII parameters
+        gcnii_alpha: float = 0.1,
+        gcnii_theta: float = 0.5,
+        # PNA parameters
+        deg: torch.Tensor = None,
     ):
         super().__init__()
         self.num_layers = num_layers
         self.dropout = dropout
         self.residual = residual
         self.jk_mode = jk_mode
+        self.conv_type = conv_type.lower()
 
         # Input projection
         self.node_proj = nn.Linear(in_channels, hidden_dim)
+
+        # PNA default degree histogram
+        if conv_type == 'pna' and deg is None:
+            deg = torch.ones(128, dtype=torch.long)
 
         # SLE-GNN layers
         self.layers = nn.ModuleList()
@@ -173,6 +202,9 @@ class SLEGNNEncoder(nn.Module):
                     mlp_layers=mlp_layers,
                     heads=heads,
                     dropout=dropout,
+                    gcnii_alpha=gcnii_alpha,
+                    gcnii_theta=gcnii_theta,
+                    deg=deg,
                 )
             )
 
@@ -206,9 +238,12 @@ class SLEGNNEncoder(nn.Module):
         # Store intermediate representations for JK
         layer_outputs = []
 
+        # Store initial features for GCNII
+        h_0 = h
+
         # Pass through SLE-GNN layers
         for i, layer in enumerate(self.layers):
-            h_new = layer(h, edge_index, num_nodes)
+            h_new = layer(h, edge_index, num_nodes, x_0=h_0)
 
             # Residual connection (skip for first layer if dimensions don't match)
             if self.residual:
@@ -259,6 +294,9 @@ class SLEGNNClassifier(nn.Module):
         residual: bool = True,
         jk_mode: Optional[str] = None,
         edge_dim: Optional[int] = None,  # For compatibility, not used in base version
+        gcnii_alpha: float = 0.1,
+        gcnii_theta: float = 0.5,
+        deg: torch.Tensor = None,
     ):
         super().__init__()
 
@@ -273,6 +311,9 @@ class SLEGNNClassifier(nn.Module):
             dropout=dropout,
             residual=residual,
             jk_mode=jk_mode,
+            gcnii_alpha=gcnii_alpha,
+            gcnii_theta=gcnii_theta,
+            deg=deg,
         )
 
         # Global pooling
@@ -328,6 +369,9 @@ class SLEGNNNodeClassifier(nn.Module):
         dropout: float = 0.1,
         residual: bool = True,
         jk_mode: Optional[str] = None,
+        gcnii_alpha: float = 0.1,
+        gcnii_theta: float = 0.5,
+        deg: torch.Tensor = None,
     ):
         super().__init__()
 
@@ -342,6 +386,9 @@ class SLEGNNNodeClassifier(nn.Module):
             dropout=dropout,
             residual=residual,
             jk_mode=jk_mode,
+            gcnii_alpha=gcnii_alpha,
+            gcnii_theta=gcnii_theta,
+            deg=deg,
         )
 
     def forward(self, batch: SubgraphFeaturesBatch) -> Tensor:

@@ -6,6 +6,10 @@
 #   ./run_comparison.sh                    # default: gcn
 #   ./run_comparison.sh --conv_type gin    # use GIN convolution
 #   ./run_comparison.sh --conv_type sage   # use GraphSAGE
+#   ./run_comparison.sh --conv_type sgc    # use SGC (Simplified Graph Convolution)
+#   ./run_comparison.sh --conv_type gcnii  # use GCNII
+#   ./run_comparison.sh --conv_type pna    # use PNA (Principal Neighbourhood Aggregation)
+#   ./run_comparison.sh --conv_type jknet  # use JKNet (GCN + Jumping Knowledge)
 #   ./run_comparison.sh --conv_type gcn --multi_seed  # multi-seed runs
 # ==============================================================================
 
@@ -33,7 +37,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--conv_type gcn|gin|sage|gat|gatv2] [--multi_seed] [--seeds '42 10 32']"
+            echo "Usage: $0 [--conv_type gcn|gin|sage|gat|gatv2|sgc|gcnii|pna|jknet] [--multi_seed] [--seeds '42 10 32']"
             exit 1
             ;;
     esac

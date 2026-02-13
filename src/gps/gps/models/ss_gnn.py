@@ -5,7 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from torch_geometric.nn import (
-    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_add_pool, global_max_pool, global_sort_pool
+    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, SGConv, GCN2Conv, PNAConv,
+    global_mean_pool, global_add_pool, global_max_pool, global_sort_pool
 )
 from torch_geometric.nn.norm import BatchNorm
 from gps import SubgraphFeaturesBatch
@@ -36,7 +37,7 @@ class SubgraphGNNEncoder(nn.Module):
     def __init__(self,
                  in_channels: int,
                  out_channels: int,
-                 edge_dim: int, 
+                 edge_dim: int,
                  hidden_dim: int,
                  num_layers: int = 5,
                  mlp_layers: int = 4,
@@ -44,15 +45,25 @@ class SubgraphGNNEncoder(nn.Module):
                  conv_type: str = "gine",
                  pooling: str = "mean",
                  res_connect: bool = True,
-                 batch_norm: bool = True):
+                 batch_norm: bool = True,
+                 # GCNII parameters
+                 gcnii_alpha: float = 0.1,
+                 gcnii_theta: float = 0.5,
+                 # PNA parameters
+                 deg: torch.Tensor = None):
 
         super().__init__()
         conv_type = conv_type.lower()
-        assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2'}
+        assert conv_type in {'gine', 'gin', 'gcn', 'sage', 'gatv2', 'sgc', 'gcnii', 'pna'}
         self.conv_type = conv_type
         self.num_layers = num_layers
         self.dropout = dropout
         self.out_channels = out_channels
+        self.gcnii_alpha = gcnii_alpha
+        self.gcnii_theta = gcnii_theta
+        if conv_type == 'pna' and deg is None:
+            deg = torch.ones(128, dtype=torch.long)
+        self.deg = deg
         if pooling == 'mean':
             self.pooling_fn = global_mean_pool
         elif pooling in ['add', 'sum']:
@@ -75,12 +86,12 @@ class SubgraphGNNEncoder(nn.Module):
         # Build layers
         self.convs = nn.ModuleList()
         self.bns   = nn.ModuleList()
-        for layer in range(num_layers):
-            self.convs.append(self._make_conv(hidden_dim, hidden_dim, mlp_layers))
+        for layer_idx in range(num_layers):
+            self.convs.append(self._make_conv(hidden_dim, hidden_dim, mlp_layers, layer_idx=layer_idx))
             if self.batch_norm:
                 self.bns.append(BatchNorm(hidden_dim))
 
-    def _make_conv(self, in_dim, out_dim, mlp_layers):
+    def _make_conv(self, in_dim, out_dim, mlp_layers, layer_idx=0):
         if self.conv_type == 'gine':
             mlp = make_mlp(in_dim, in_dim, out_dim, num_layers=mlp_layers)
             return GINEConv(nn=mlp, train_eps=True)  # we project edge_attr ourselves
@@ -93,7 +104,17 @@ class SubgraphGNNEncoder(nn.Module):
             return SAGEConv(in_dim, out_dim)
         if self.conv_type == 'gatv2':
             return GATv2Conv(in_dim, out_dim, heads=1, concat=True)  # keeps dim = out_dim
-        raise ValueError("Unknown conv_type")
+        if self.conv_type == 'sgc':
+            return SGConv(in_dim, out_dim, K=1)
+        if self.conv_type == 'gcnii':
+            return GCN2Conv(out_dim, alpha=self.gcnii_alpha, theta=self.gcnii_theta,
+                            layer=layer_idx + 1, shared_weights=True, cached=False, normalize=True)
+        if self.conv_type == 'pna':
+            return PNAConv(in_dim, out_dim,
+                           aggregators=['mean', 'min', 'max', 'std'],
+                           scalers=['identity', 'amplification', 'attenuation'],
+                           deg=self.deg)
+        raise ValueError(f"Unknown conv_type: {self.conv_type}")
 
     # ---------- FORWARD ----------
     def forward(self, 
@@ -112,6 +133,7 @@ class SubgraphGNNEncoder(nn.Module):
             [torch.Tensor]: encoding of each subgraph
         """
         h = self.node_proj(x)
+        h_0 = h  # Initial features for GCNII
         if self.use_edges:
             if edge_attr is None:
                 raise ValueError("edge_attr is required for conv_type='gine'.")
@@ -119,7 +141,12 @@ class SubgraphGNNEncoder(nn.Module):
 
         for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
             h_res = h
-            h = conv(h, edge_index) if not self.use_edges else conv(h, edge_index, e)
+            if self.conv_type == 'gcnii':
+                h = conv(h, h_0, edge_index)
+            elif self.use_edges:
+                h = conv(h, edge_index, e)
+            else:
+                h = conv(h, edge_index)
             if self.batch_norm:
                 h = bn(h)
             h = F.relu(h)
