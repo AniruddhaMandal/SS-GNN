@@ -178,8 +178,12 @@ class SLEGNNEncoder(nn.Module):
         self.num_layers = num_layers
         self.dropout = dropout
         self.residual = residual
-        self.jk_mode = jk_mode
-        self.conv_type = conv_type.lower()
+
+        # JKNet setup
+        self.is_jknet = (conv_type.lower() == 'jknet')
+        if self.is_jknet:
+            self.jk_mode = jk_mode if jk_mode is not None else 'cat'
+            conv_type = 'gcn'  # JKNet uses GCN as the base convolution
 
         # Input projection
         self.node_proj = nn.Linear(in_channels, hidden_dim)
@@ -209,13 +213,15 @@ class SLEGNNEncoder(nn.Module):
             )
 
         # Jumping Knowledge aggregation
-        if jk_mode == 'cat':
-            self.jk_linear = nn.Linear(hidden_dim * num_layers, out_dim)
-        elif jk_mode == 'max':
-            self.jk_linear = nn.Linear(hidden_dim, out_dim)
-        elif jk_mode == 'lstm':
-            self.jk_lstm = nn.LSTM(hidden_dim, hidden_dim, batch_first=True, bidirectional=True)
-            self.jk_linear = nn.Linear(2 * hidden_dim, out_dim)
+        if self.is_jknet:
+            if self.jk_mode == 'cat':
+                self.jk_linear = nn.Linear(hidden_dim * num_layers, out_dim)
+                print("JK linear created.!\n\n")
+            elif self.jk_mode == 'max':
+                self.jk_linear = nn.Linear(hidden_dim, out_dim)
+            elif self.jk_mode == 'lstm':
+                self.jk_lstm = nn.LSTM(hidden_dim, hidden_dim, batch_first=True, bidirectional=True)
+                self.jk_linear = nn.Linear(2 * hidden_dim, out_dim)
         else:
             self.out_proj = nn.Linear(hidden_dim, out_dim) if hidden_dim != out_dim else nn.Identity()
 
@@ -257,17 +263,18 @@ class SLEGNNEncoder(nn.Module):
             layer_outputs.append(h)
 
         # Jumping Knowledge aggregation
-        if self.jk_mode == 'cat':
-            h = torch.cat(layer_outputs, dim=-1)
-            h = self.jk_linear(h)
-        elif self.jk_mode == 'max':
-            h = torch.stack(layer_outputs, dim=0).max(dim=0)[0]
-            h = self.jk_linear(h)
-        elif self.jk_mode == 'lstm':
-            h_stack = torch.stack(layer_outputs, dim=1)  # [N, L, H]
-            h_lstm, _ = self.jk_lstm(h_stack)
-            h = h_lstm[:, -1, :]  # Take last hidden state
-            h = self.jk_linear(h)
+        if self.is_jknet:
+            if self.jk_mode == 'cat':
+                h = torch.cat(layer_outputs, dim=-1)
+                h = self.jk_linear(h)
+            elif self.jk_mode == 'max':
+                h = torch.stack(layer_outputs, dim=0).max(dim=0)[0]
+                h = self.jk_linear(h)
+            elif self.jk_mode == 'lstm':
+                h_stack = torch.stack(layer_outputs, dim=1)  # [N, L, H]
+                h_lstm, _ = self.jk_lstm(h_stack)
+                h = h_lstm[:, -1, :]  # Take last hidden state
+                h = self.jk_linear(h)
         else:
             h = self.out_proj(h)
 
