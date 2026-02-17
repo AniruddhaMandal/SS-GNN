@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import (
-    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, SGConv, GCN2Conv, PNAConv,
+    GINEConv, GINConv, GCNConv, SAGEConv, GATConv, GATv2Conv, SGConv, GCN2Conv, PNAConv,
     global_mean_pool, global_add_pool, global_max_pool
 )
 from torch_geometric.nn.norm import BatchNorm
@@ -26,11 +26,11 @@ def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
 class VanillaGNNClassifier(nn.Module):
     """
     A flexible graph-level classifier:
-      - conv_type: 'gine' (uses edge_attr), 'gin', 'gcn', 'sage', 'gatv2',
+      - conv_type: 'gine' (uses edge_attr), 'gin', 'gcn', 'sage', 'gat', 'gatv2',
                    'sgc', 'gcnii', 'pna', 'jknet'
       - For Peptides-func (multi-label), uses BCE-with-logits style outputs.
     """
-    SUPPORTED_CONVS = {'gine', 'gin', 'gcn', 'sage', 'gatv2', 'sgc', 'gcnii', 'pna', 'jknet'}
+    SUPPORTED_CONVS = {'gine', 'gin', 'gcn', 'sage', 'gat', 'gatv2', 'sgc', 'gcnii', 'pna', 'jknet'}
 
     def __init__(self,
                  in_channels: int,
@@ -121,6 +121,8 @@ class VanillaGNNClassifier(nn.Module):
             return GCNConv(in_dim, out_dim, cached=False, normalize=True)
         if self.conv_type == 'sage':
             return SAGEConv(in_dim, out_dim)
+        if self.conv_type == 'gat':
+            return GATConv(in_dim, out_dim, heads=1, concat=True)
         if self.conv_type == 'gatv2':
             return GATv2Conv(in_dim, out_dim, heads=1, concat=True)
         if self.conv_type == 'sgc':
