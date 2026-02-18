@@ -526,6 +526,13 @@ def build_heterophilic_platonov(cfg: ExperimentConfig):
     # Get the single graph - these datasets typically have train/val/test masks
     data = dataset[0]
 
+    # HeterophilousGraphDataset provides 2D masks [N, 10] for 10 pre-computed splits;
+    # select the first split (index 0) to get 1D boolean masks.
+    if hasattr(data, 'train_mask') and data.train_mask.dim() == 2:
+        data.train_mask = data.train_mask[:, 0]
+        data.val_mask   = data.val_mask[:, 0]
+        data.test_mask  = data.test_mask[:, 0]
+
     # For node classification, batch size is always 1 (the entire graph)
     train_loader = DataLoader([data], batch_size=1, shuffle=False)
     val_loader = DataLoader([data], batch_size=1, shuffle=False)
