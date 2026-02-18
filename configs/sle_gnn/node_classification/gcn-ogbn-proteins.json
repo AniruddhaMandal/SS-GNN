@@ -1,0 +1,35 @@
+{
+    "name": "SLE-GNN: ogbn-proteins GCN",
+    "task": "Node-Multilabel-Classification",
+    "dataset_name": "ogbn-proteins",
+    "model_name": "SLE-GNN",
+    "model_config": {
+        "mpnn_type": "gcn",
+        "node_feature_dim": 8,
+        "hidden_dim": 256,
+        "out_dim": 112,
+        "mpnn_layers": 3,
+        "dropout": 0.5,
+        "pooling": "off",
+        "kwargs": {
+            "residual": false,
+            "jk_mode": null
+        }
+    },
+    "train": {
+        "epochs": 1000,
+        "train_batch_size": 1,
+        "val_batch_size": 1,
+        "lr": 0.01,
+        "weight_decay": 0.0,
+        "optimizer": "adam",
+        "loss_fn": "BCEWithLogitsLoss",
+        "metric": "ROCAUC-multilabel",
+        "train_ratio": 0.6,
+        "val_ratio": 0.2
+    },
+    "device": "cuda",
+    "seed": 42,
+    "num_workers": 0,
+    "cache_dir": "./cache"
+}

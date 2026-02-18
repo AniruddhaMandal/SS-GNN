@@ -550,6 +550,13 @@ class Experiment:
                         loss = self.criterion(output[train_mask], labels[train_mask].long())
                     else:
                         loss = self.criterion(output, labels.long())
+                elif self.cfg.task == "Node-Multilabel-Classification":
+                    # Multi-label node classification (e.g. ogbn-proteins): labels are [N, C] float
+                    if batch.train_mask is not None:
+                        train_mask = batch.train_mask
+                        loss = self.criterion(output[train_mask], labels[train_mask].float())
+                    else:
+                        loss = self.criterion(output, labels.float())
                 elif self.cfg.task == "Link-Prediction":
                     loss = self.criterion(output, labels)
                 elif self.cfg.task == "Regression":
@@ -645,6 +652,21 @@ class Experiment:
                             loss = self.criterion(output[mask], labels[mask].long())
                         else:
                             loss = self.criterion(output, labels.long())
+                    if self.cfg.task == "Node-Multilabel-Classification":
+                        # Multi-label node classification: labels are [N, C] float
+                        if split == 'val' and batch.val_mask is not None:
+                            mask = batch.val_mask
+                        elif split == 'test' and batch.test_mask is not None:
+                            mask = batch.test_mask
+                        elif split == 'train' and batch.train_mask is not None:
+                            mask = batch.train_mask
+                        else:
+                            mask = None
+
+                        if mask is not None:
+                            loss = self.criterion(output[mask], labels[mask].float())
+                        else:
+                            loss = self.criterion(output, labels.float())
                     if self.cfg.task == "Link-Prediction":
                         loss = self.criterion(output, labels)
                     if self.cfg.task == "Regression":
@@ -660,6 +682,23 @@ class Experiment:
                     all_edge_label_index.append(batch.edge_label_index.detach().cpu().numpy())
                 elif self.cfg.task == "Node-Classification":
                     # Apply the appropriate mask for node classification
+                    if split == 'val' and batch.val_mask is not None:
+                        mask = batch.val_mask
+                    elif split == 'test' and batch.test_mask is not None:
+                        mask = batch.test_mask
+                    elif split == 'train' and batch.train_mask is not None:
+                        mask = batch.train_mask
+                    else:
+                        mask = None
+
+                    if mask is not None:
+                        all_logits.append(output[mask].detach().cpu())
+                        all_targets.append(labels[mask].detach().cpu())
+                    else:
+                        all_logits.append(output.detach().cpu())
+                        all_targets.append(labels.detach().cpu())
+                elif self.cfg.task == "Node-Multilabel-Classification":
+                    # Apply the appropriate mask for multi-label node classification
                     if split == 'val' and batch.val_mask is not None:
                         mask = batch.val_mask
                     elif split == 'test' and batch.test_mask is not None:
@@ -718,6 +757,10 @@ class Experiment:
                     # Node-level classification: argmax over classes, then compute metrics
                     all_preds = all_logits.argmax(dim=-1)  # [num_nodes]
                     metrics = self.cfg.metric_fn(all_preds.numpy(), all_targets.numpy())
+                if self.cfg.task == "Node-Multilabel-Classification":
+                    # Multi-label: sigmoid → per-task ROCAUC
+                    all_probs = torch.sigmoid(all_logits)
+                    metrics = self.cfg.metric_fn(all_targets.numpy(), all_probs.numpy())
                 if self.cfg.task == "Regression":
                     metrics = self.cfg.metric_fn(all_logits.numpy(), all_targets.squeeze().numpy())
                 if self.cfg.task == "Link-Prediction":
@@ -793,7 +836,7 @@ class Experiment:
             labels = batch.y.float()
 
         # Handle node classification masks
-        if self.cfg.task == 'Node-Classification':
+        if self.cfg.task in ('Node-Classification', 'Node-Multilabel-Classification'):
             if hasattr(batch, 'train_mask'):
                 sf_batch.train_mask = batch.train_mask
             if hasattr(batch, 'val_mask'):

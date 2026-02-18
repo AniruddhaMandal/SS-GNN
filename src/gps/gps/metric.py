@@ -48,6 +48,28 @@ def build_rocauc():
         return roc_auc_score(y_true, y_pred)
     return _metric_decoretor(rocauc, 'ROCAUC')
 
+@register_metric('ROCAUC-multilabel')
+def build_rocauc_multilabel():
+    from sklearn.metrics import roc_auc_score
+    def rocauc_multilabel(y_true, y_pred):
+        """
+        Per-task mean ROCAUC for multi-label node classification (e.g. ogbn-proteins).
+        Tasks where y_true has only one class are skipped.
+        """
+        y_true = np.asarray(y_true)
+        y_pred = np.asarray(y_pred)
+        if y_true.ndim == 1:
+            return roc_auc_score(y_true, y_pred)
+        scores = []
+        for i in range(y_true.shape[1]):
+            col_true = y_true[:, i]
+            col_pred = y_pred[:, i]
+            if len(np.unique(col_true)) < 2:
+                continue
+            scores.append(roc_auc_score(col_true, col_pred))
+        return float(np.mean(scores)) if scores else 0.0
+    return _metric_decoretor(rocauc_multilabel, 'ROCAUC-multilabel')
+
 @register_metric('MRR')
 def build_mrr():
     return _metric_decoretor(mean_reciprocal_rank, 'MRR')

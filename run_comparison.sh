@@ -55,6 +55,7 @@ echo "=============================================="
 # Config file suffix maps to gcn-{suffix}.json in both vanilla/ and sle_gnn/ dirs
 
 DATASETS=(
+    # ── Homophilic (citation / co-purchase / co-authorship) ──────────────────
     "cora"
     "citeseer"
     "pubmed"
@@ -62,17 +63,29 @@ DATASETS=(
     "coauthor-cs"
     "coauthor-physics"
     "amazon-computers"
+    # ── Heterophilic – classic ────────────────────────────────────────────────
     "chameleon"
     "squirrel"
     "actor"
     "wisconsin"
     "texas"
     "cornell"
+    # ── Heterophilic – Platonov et al. (2023) ────────────────────────────────
     "roman-empire"
     "amazon-ratings"
     "minesweeper"
     "tolokers"
     "questions"
+    # ── LINKX large-scale heterophilic (Lim et al., 2021) ───────────────────
+    "arxiv-year"
+    "snap-patents"
+    "penn94"
+    "pokec"
+    "twitch-gamers"
+    "genius"
+    # ── OGB node-property prediction ─────────────────────────────────────────
+    "ogbn-arxiv"
+    "ogbn-proteins"
 )
 
 VANILLA_DIR="configs/vanilla/node_classification"
